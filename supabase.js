@@ -2,8 +2,8 @@
    SUPABASE - sincronização entre aparelhos
    Carregue este arquivo ANTES do script.js
 ========================================== */
-var SB_URL = "https://llmwmqmkqhwjvilkpseq.supabase.co";
-var SB_KEY = "sb_publishable_7wXP-xiLJJ2H12qD6YN0WQ_keb0PneE";
+var SB_URL = "https://xdnvouezqiyfccmbialn.supabase.co";
+var SB_KEY = "sb_publishable_rkyc-FuleLowOaiqmVsAMQ_wOyE8eu_";
 var SB_BUCKET = "fotos";
 
 var sb = null;

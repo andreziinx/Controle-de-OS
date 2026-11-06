@@ -183,24 +183,31 @@ function avatarHTML(u, cls) {
 function abrirDB() {
     return new Promise(function (res) {
         try {
+            if (!window.indexedDB) { res(); return; }   // navegador sem IndexedDB: usa o plano B
             var r = indexedDB.open("manutencao", 1);
             r.onupgradeneeded = function () { r.result.createObjectStore("kv"); };
             r.onsuccess = function () { DB = r.result; res(); };
-            r.onerror = function () { res(); };
-        } catch (e) { res(); }
+            r.onerror = function () { DB = null; res(); };
+            r.onblocked = function () { DB = null; res(); };   // outra aba segurando o banco
+        } catch (e) { DB = null; res(); }
     });
 }
 
 function kvGet(k) {
     return new Promise(function (res) {
+        var doLocal = function () {
+            try { res(JSON.parse(localStorage.getItem(k))); } catch (e) { res(); }
+        };
         if (DB) {
             try {
                 var q = DB.transaction("kv").objectStore("kv").get(k);
+                // antes: se o IndexedDB falhasse, a leitura não devolvia nada
+                // e o app ficava parado na tela de carregamento
                 q.onsuccess = function () { res(q.result); };
-                q.onerror = function () { res(); };
-            } catch (e) { res(); }
+                q.onerror = doLocal;
+            } catch (e) { doLocal(); }
         } else {
-            try { res(JSON.parse(localStorage.getItem(k))); } catch (e) { res(); }
+            doLocal();
         }
     });
 }
@@ -268,6 +275,7 @@ function normalizar() {
     if (!empresa || typeof empresa !== "object") empresa = { nome: "", logo: "" };
     if (!empresa.nome) empresa.nome = "";
     if (!empresa.logo) empresa.logo = "";
+    if (!empresa.meta) empresa.meta = 0;
     if (!avisos) avisos = [];
     if (!estoque) estoque = [];
     if (!compras) compras = [];
@@ -458,7 +466,11 @@ function sair() {
 function cabecalho(nome) {
     var adm = ehAdmin();
     var u = user();   // pode não existir (ex.: menu do perfil clicado durante o login)
-    if (nome === "inicio")     return [dataLonga(new Date()), saudacao() + (u ? ", " + u.nome + " · " + (adm ? "Painel do líder" : "Painel do técnico") : "")];
+    if (nome === "inicio") {
+        var fest = u && aniversariantesDoDia(hoje()).some(function (x) { return x.id === u.id; });
+        return [dataLonga(new Date()), fest ? "🎉 Parabéns, " + u.nome + ", pelo seu dia!"
+            : saudacao() + (u ? ", " + u.nome + " · " + (adm ? "Painel do líder" : "Painel do técnico") : "")];
+    }
     if (nome === "os")         return ["Ordens de Serviço", ordens.length + " ordens cadastradas"];
     if (nome === "calendario") return ["Calendário", "Prazos, serviços e eventos"];
     if (nome === "perfil")     return ["Meu Perfil", u ? u.funcao : ""];
@@ -472,7 +484,7 @@ function cabecalho(nome) {
     if (nome === "nova") {
         var ed = $("fId").value;
         if (ed) return ["Editar OS", "OS " + num(ed)];
-        return adm ? ["Nova OS", "Designar para um técnico"] : ["Registrar serviço", "Relatório de campo com fotos"];
+        return (adm || modoDesig) ? ["Nova OS", "Designar para um técnico"] : ["Registrar serviço", "Relatório de campo com fotos"];
     }
     return ["", ""];
 }
@@ -534,6 +546,7 @@ function renderTudo() {
     if (viewAtual === "p-peca")     renderPeca();
     if (viewAtual.indexOf("p-") === 0) renderSub();
     atualizarSino();
+    setTimeout(conferirConquistas, 500);
 }
 
 /* ==========================================
@@ -550,6 +563,18 @@ function naoLidos() {
     return alertas().filter(function (a) { return l.indexOf(a.key) === -1; });
 }
 
+function dispKey() { return "mc_disp_" + sessao; }
+
+function getDispensados() {
+    try { return JSON.parse(localStorage.getItem(dispKey()) || "[]"); } catch (e) { return []; }
+}
+
+function dispensarAlertas(keys) {
+    var d = getDispensados();
+    keys.forEach(function (k) { if (d.indexOf(k) === -1) d.push(k); });
+    try { localStorage.setItem(dispKey(), JSON.stringify(d.slice(-500))); } catch (e) {}
+}
+
 function marcarLidos() {
     var l = getLidos();
     alertas().forEach(function (a) { if (l.indexOf(a.key) === -1) l.push(a.key); });
@@ -561,8 +586,8 @@ function agruparAlertas(lista) {
     var ordem = [], mapa = {};
     lista.forEach(function (a) {
         var k = a.t + "|" + a.s;
-        if (!mapa[k]) { mapa[k] = a; mapa[k].n = 1; ordem.push(k); }
-        else mapa[k].n++;
+        if (!mapa[k]) { mapa[k] = a; mapa[k].n = 1; mapa[k].keys = [a.key]; ordem.push(k); }
+        else { mapa[k].n++; mapa[k].keys.push(a.key); }
     });
     return ordem.map(function (k) {
         var a = mapa[k];
@@ -594,7 +619,11 @@ function alertas() {
         } else if (d <= 2) {
             lista.push({ key: "p" + o.id + "_" + d, nivel: 2, cor: "amar", ic: "fa-hourglass-half", tipo: "os", ref: o.id,
                 t: rot + (d === 1 ? " vence amanhã" : " vence em 2 dias"), s: o.titulo + quem });
-        } else if (!adm && minha && o.origem === "designada" && o.status === "aguardando") {
+        }
+
+        // O aviso de "nova OS" não pode depender do prazo: designada hoje para
+        // a semana que vem, o técnico precisa saber que existe uma OS para aceitar
+        if (!adm && minha && o.origem === "designada" && o.status === "aguardando") {
             lista.push({ key: "n" + o.id, nivel: 2, cor: "azul", ic: "fa-hand-point-right", tipo: "os", ref: o.id,
                 t: "Nova OS para você", s: rot + " · " + o.titulo });
         }
@@ -602,7 +631,7 @@ function alertas() {
 
     avisos.forEach(function (a) {
         if (a.para !== sessao || a.em < recente) return;
-        lista.push({ key: "v" + a.id, nivel: 3, cor: "verde", ic: "fa-circle-check", tipo: "os", ref: a.osId, t: a.t, s: a.s });
+        lista.push({ key: "v" + a.id, nivel: 3, cor: a.cor || "verde", ic: a.ic || "fa-circle-check", tipo: "os", ref: a.osId, t: a.t, s: a.s });
     });
 
     eventos.forEach(function (e) {
@@ -616,6 +645,25 @@ function alertas() {
             t: (novo ? "Novo evento: " : "Evento: ") + e.titulo,
             s: quando + (e.hora ? " às " + e.hora : "") + " · " + e.tipo });
     });
+
+    // Aniversários e meta da equipe
+    aniversariantesDoDia(hoje()).forEach(function (u) {
+        var eu = u.id === sessao;
+        lista.push({ key: "nv" + u.id + "_" + hoje(), nivel: 3, cor: "rosa", ic: "fa-cake-candles", tipo: "niver", ref: hoje(),
+            t: eu ? "🎉 Parabéns, " + u.nome + "!" : "🎂 Hoje é aniversário de " + u.nome,
+            s: eu ? "Hoje é o seu dia. A equipe deseja muito sucesso!" : "Não esqueça de dar os parabéns" });
+    });
+    if (adm) {
+        aniversariantesDoDia(somaDias(1)).forEach(function (u) {
+            lista.push({ key: "nva" + u.id + "_" + somaDias(1), nivel: 2, cor: "rosa", ic: "fa-cake-candles", tipo: "niver", ref: somaDias(1),
+                t: "🎂 Amanhã é aniversário de " + u.nome, s: "Que tal preparar uma surpresa para a equipe?" });
+        });
+    }
+    var mt = metaInfo();
+    if (mt.meta && mt.feitas >= mt.meta) {
+        lista.push({ key: "mt" + mesAtual() + "_" + mt.meta, nivel: 2, cor: "verde", ic: "fa-bullseye", tipo: "meta", ref: 0,
+            t: "🎯 Meta do mês batida!", s: mt.feitas + " de " + mt.meta + " OS finalizadas pela equipe" });
+    }
 
     // Compras
     var comp = adm || ehCompras();
@@ -651,6 +699,10 @@ function alertas() {
         });
     }
 
+    // avisos que o usuário apagou (deslizando para o lado) não aparecem mais
+    var disp = getDispensados();
+    lista = lista.filter(function (a) { return disp.indexOf(a.key) === -1; });
+
     lista.sort(function (a, b) { return b.nivel - a.nivel; });
     return agruparAlertas(lista);
 }
@@ -674,18 +726,21 @@ function abrirAlertas() {
         h += '<button class="btn-ativar" onclick="ativarAvisos()"><i class="fa-solid fa-bell"></i> Ativar avisos no celular</button>';
     }
 
+    h += '<div id="notifLista">';
     if (!lista.length) {
         h += '<div class="vazio"><i class="fa-regular fa-circle-check"></i>Tudo em dia! Nenhum aviso no momento.</div>';
     } else {
         h += lista.map(function (a) {
-            var acao = a.tipo === "os" ? "abrirOS(" + a.ref + ")" : a.tipo === "compra" ? "abrirCompra(" + a.ref + ",true)" : a.tipo === "est" ? "abrirPeca(" + a.ref + ")" : "irEvento(" + a.ref + ")";
-            return '<div class="notif ' + a.cor + (lidos.indexOf(a.key) === -1 ? " nova" : "") + '" onclick="' + acao + '">' +
+            var acao = a.tipo === "niver" ? "irNiver('" + a.ref + "')" : a.tipo === "meta" ? "fecharOS();ir('inicio')" : a.tipo === "os" ? "abrirOS(" + a.ref + ")" : a.tipo === "compra" ? "abrirCompra(" + a.ref + ",true)" : a.tipo === "est" ? "abrirPeca(" + a.ref + ")" : "irEvento(" + a.ref + ")";
+            return '<div class="notif-wrap"><div class="notif-fundo"><i class="fa-solid fa-trash-can"></i></div>' +
+                '<div class="notif ' + a.cor + (lidos.indexOf(a.key) === -1 ? " nova" : "") + '" data-keys="' + esc((a.keys || [a.key]).join(",")) + '" onclick="' + acao + '">' +
                 '<div class="notif-ic"><i class="fa-solid ' + a.ic + '"></i></div>' +
-                '<div class="notif-tx"><b>' + esc(a.t) + '</b><small>' + esc(a.s) + '</small></div></div>';
+                '<div class="notif-tx"><b>' + esc(a.t) + '</b><small>' + esc(a.s) + '</small></div></div></div>';
         }).join("");
     }
+    h += '</div>';
 
-    h += '<p class="dica">Os avisos de pop-up aparecem quando o app está aberto neste aparelho.</p>';
+    h += '<p class="dica">Deslize um aviso para o lado para apagá-lo. Os avisos de pop-up aparecem quando o app está aberto neste aparelho.</p>';
 
     $("sheet").innerHTML = h;
     $("overlay").classList.add("on");
@@ -695,6 +750,86 @@ function abrirAlertas() {
     marcarLidos();
     atualizarSino();
 }
+
+/* Deslizar um aviso para o lado apaga (igual às notificações do celular) */
+var notifBloq = false;
+
+(function () {
+    var drag = null;
+    var el = $("sheet");
+    if (!el) return;
+
+    // depois de arrastar, o toque não pode "abrir" o aviso
+    document.addEventListener("click", function (e) {
+        if (notifBloq) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
+
+    function sumir(n, dir) {
+        var keys = (n.getAttribute("data-keys") || "").split(",").filter(Boolean);
+        dispensarAlertas(keys);
+        atualizarSino();
+        var wrap = n.parentNode;
+        n.style.transition = "transform .22s ease, opacity .22s ease";
+        n.style.transform = "translateX(" + (dir * (n.offsetWidth + 40)) + "px)";
+        n.style.opacity = "0";
+        setTimeout(function () {
+            wrap.style.height = wrap.offsetHeight + "px";
+            void wrap.offsetHeight;
+            wrap.style.transition = "height .2s ease, margin .2s ease";
+            wrap.style.height = "0";
+            wrap.style.marginBottom = "0";
+            setTimeout(function () {
+                if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+                var box = $("notifLista");
+                if (box && !box.querySelector(".notif-wrap")) {
+                    box.innerHTML = '<div class="vazio"><i class="fa-regular fa-circle-check"></i>Tudo em dia! Nenhum aviso no momento.</div>';
+                }
+            }, 210);
+        }, 220);
+    }
+
+    el.addEventListener("pointerdown", function (e) {
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        var n = e.target.closest ? e.target.closest(".notif") : null;
+        if (!n || !n.getAttribute("data-keys")) return;
+        drag = { el: n, x: e.clientX, id: e.pointerId, dx: 0, move: false, t: Date.now() };
+        n.style.transition = "none";
+    });
+
+    el.addEventListener("pointermove", function (e) {
+        if (!drag || e.pointerId !== drag.id) return;
+        var dx = e.clientX - drag.x;
+        if (!drag.move) {
+            if (Math.abs(dx) < 8) return;
+            drag.move = true;
+            try { drag.el.setPointerCapture(e.pointerId); } catch (x) {}
+        }
+        drag.dx = dx;
+        drag.el.style.transform = "translateX(" + dx + "px)";
+        drag.el.style.opacity = String(Math.max(0.2, 1 - Math.abs(dx) / (drag.el.offsetWidth * 1.1)));
+    });
+
+    function soltar(e) {
+        if (!drag || e.pointerId !== drag.id) return;
+        var d = drag;
+        drag = null;
+        if (!d.move) { d.el.style.transition = ""; return; }
+        notifBloq = true;
+        setTimeout(function () { notifBloq = false; }, 80);
+        var passou = Math.abs(d.dx) > d.el.offsetWidth * 0.35;
+        var rapido = Math.abs(d.dx) > 40 && Math.abs(d.dx) / Math.max(1, Date.now() - d.t) > 0.5;
+        if (e.type !== "pointercancel" && (passou || rapido)) {
+            sumir(d.el, d.dx > 0 ? 1 : -1);
+        } else {
+            d.el.style.transition = "transform .2s ease, opacity .2s ease";
+            d.el.style.transform = "";
+            d.el.style.opacity = "";
+            setTimeout(function () { d.el.style.transition = ""; }, 220);
+        }
+    }
+    el.addEventListener("pointerup", soltar);
+    el.addEventListener("pointercancel", soltar);
+})();
 
 function ativarAvisos() {
     try {
@@ -816,6 +951,8 @@ function atualizarRelogio() {
 
 function renderInicio() {
     var adm = ehAdmin();
+    if ($("festaBox")) $("festaBox").innerHTML = festaHTML();
+    if ($("metaBox")) $("metaBox").innerHTML = metaHTML();
     var base = adm ? ordens : ordens.filter(function (o) { return o.tecId === sessao; });
 
     function cont(st) { return base.filter(function (o) { return o.status === st; }).length; }
@@ -984,14 +1121,16 @@ function renderCalendario() {
         var data = iso(new Date(ano, mes, d));
         var os = ordens.filter(function (o) { return o.data === data; });
         var ev = eventosDoDia(data);
+        var nv = aniversariantesDoDia(data);
         nOS += os.length;
-        nEv += ev.length;
+        nEv += ev.length + nv.length;
 
         var kinds = [];
         if (os.some(function (o) { return o.status !== "final" && !atrasada(o); })) kinds.push("azul");
         if (os.some(atrasada)) kinds.push("verm");
         if (os.some(function (o) { return o.status === "final"; })) kinds.push("verde");
         if (ev.length) kinds.push("roxo");
+        if (nv.length) kinds.push("rosa");
 
         var fds = new Date(ano, mes, d).getDay();
         var cls = "dia" + (kinds.length ? " tem" : "") + (fds === 0 || fds === 6 ? " fds" : "") +
@@ -1020,6 +1159,13 @@ function renderCalendario() {
 
     if (evs.length) {
         lista += '<div class="sec-rot">Eventos</div>' + evs.map(htmlEvento).join("");
+    }
+    var nvs = aniversariantesDoDia(calSel);
+    if (nvs.length) {
+        lista += '<div class="sec-rot">Aniversários</div>' + nvs.map(function (u) {
+            return '<div class="niver-card">' + avatarHTML(u, "niver-av") + '<div><b>🎂 ' + esc(u.nome) + '</b>' +
+                   '<small>' + (u.id === sessao ? "Parabéns pelo seu dia! 🎉" : esc(u.funcao) + " · dê os parabéns!") + '</small></div></div>';
+        }).join("");
     }
     if (oss.length) {
         lista += '<div class="sec-rot">Ordens de serviço</div>' + oss.map(htmlOS).join("");
@@ -1137,13 +1283,46 @@ function salvarEvento(id) {
     toast("Evento salvo ✔");
 }
 
+/* Janela de confirmação (substitui o confirm() feio do navegador).
+   o: { ic, titulo, texto (html já escapado), sim, nao, tipo: "perigo" | "azul" } */
+function fecharDlg() {
+    var d = $("dlgConf");
+    if (d && d.parentNode) d.parentNode.removeChild(d);
+}
+
+function pedirConfirmacao(o, ok) {
+    fecharDlg();
+    var d = document.createElement("div");
+    d.id = "dlgConf";
+    d.className = "dlg-fundo";
+    d.innerHTML = '<div class="dlg ' + (o.tipo || "perigo") + '" role="alertdialog" aria-modal="true">' +
+        '<div class="dlg-ic"><i class="fa-solid ' + (o.ic || "fa-trash-can") + '"></i></div>' +
+        '<h3>' + esc(o.titulo) + '</h3>' +
+        '<p>' + o.texto + '</p>' +
+        '<div class="dlg-bt">' +
+            '<button type="button" class="dlg-nao">' + esc(o.nao || "Não, manter") + '</button>' +
+            '<button type="button" class="dlg-sim"><i class="fa-solid ' + (o.ic || "fa-trash-can") + '"></i> ' + esc(o.sim || "Sim, excluir") + '</button>' +
+        '</div></div>';
+    document.body.appendChild(d);
+    d.addEventListener("click", function (e) { if (e.target === d) fecharDlg(); });
+    d.querySelector(".dlg-nao").onclick = fecharDlg;
+    d.querySelector(".dlg-sim").onclick = function () { fecharDlg(); ok(); };
+    requestAnimationFrame(function () { d.classList.add("on"); });
+    d.querySelector(".dlg-nao").focus();
+}
+
 function excluirEvento(id) {
-    if (!confirm("Excluir este evento?")) return;
-    eventos = eventos.filter(function (e) { return e.id !== Number(id); });
-    salvar();
-    fecharOS();
-    renderTudo();
-    toast("Evento excluído");
+    var ev = eventos.filter(function (e) { return e.id === Number(id); })[0];
+    pedirConfirmacao({
+        ic: "fa-calendar-xmark", titulo: "Excluir evento?",
+        texto: (ev ? 'O evento <b>' + esc(ev.titulo) + '</b> será removido do calendário.' : 'Este evento será removido do calendário.') + ' Essa ação não pode ser desfeita.'
+    }, function () {
+        eventos = eventos.filter(function (e) { return e.id !== Number(id); });
+        salvar();
+        fecharOS();
+        renderTudo();
+        toast("Evento excluído");
+    });
 }
 
 /* ==========================================
@@ -1177,29 +1356,32 @@ function renderPerfil() {
     $("perfilNome").textContent = u.nome;
     $("perfilCargo").textContent = u.funcao;
     $("perfilTel").textContent = u.tel ? "📞 " + u.tel : "";
+    renderRanking();
+    renderConqCard();
 
     // Cada número é um atalho para a lista correspondente
-    function st(n, rot, acao) {
-        return '<div class="clic" onclick="' + acao + '"><b>' + n + '</b><small>' + rot + '</small></div>';
+    function st(n, rot, acao, ic) {
+        return '<div class="clic" onclick="' + acao + '"><i class="fa-solid ' + ic + '"></i><b>' + n + '</b><small>' + rot + '</small></div>';
     }
 
     if (adm) {
         $("perfilStats").innerHTML =
-            st(ordens.filter(function (o) { return o.origem === "designada"; }).length, "OS designadas", "filtrarOS('designada')") +
-            st(ordens.filter(function (o) { return o.origem === "campo"; }).length, "Relat. de campo", "filtrarOS('campo')") +
-            st(tecnicos().length, "Técnicos", "ir('p-equipe')");
+            st(ordens.filter(function (o) { return o.origem === "designada"; }).length, "OS designadas", "filtrarOS('designada')", "fa-clipboard-list") +
+            st(ordens.filter(function (o) { return o.origem === "campo"; }).length, "Relat. de campo", "filtrarOS('campo')", "fa-camera") +
+            st(tecnicos().length, "Técnicos", "ir('p-equipe')", "fa-users");
         renderMenuPerfil();
+        if ($("zeroInfo")) $("zeroInfo").textContent = empresa && empresa.zeroEm ? "Último recomeço: " + fmtData(empresa.zeroEm) : "";
     } else if (ehCompras()) {
         var r = resumoCompras();
         $("perfilStats").innerHTML =
-            st(r.abertas, "Em aberto", "ir('p-compras')") + st(r.caminho, "A caminho", "ir('p-compras')") + st(r.atrasadas, "Atrasadas", "ir('p-compras')");
+            st(r.abertas, "Em aberto", "ir('p-compras')", "fa-cart-shopping") + st(r.aguardando, "A comprar", "ir('p-compras')", "fa-clipboard-list") + st(r.caminho, "A caminho", "ir('p-compras')", "fa-truck") + st(r.atrasadas, "Atrasadas", "ir('p-compras')", "fa-triangle-exclamation");
         atualizarMenuCompras();
     } else {
         var m = ordens.filter(function (o) { return o.tecId === sessao; });
         $("perfilStats").innerHTML =
-            st(m.length, "Minhas OS", "filtrarOS('todas', true)") +
-            st(m.filter(function (o) { return o.status === "final"; }).length, "Concluídas", "filtrarOS('final', true)") +
-            st(m.filter(atrasada).length, "Atrasadas", "filtrarOS('atrasadas', true)");
+            st(m.length, "Minhas OS", "filtrarOS('todas', true)", "fa-clipboard-list") +
+            st(m.filter(function (o) { return o.status === "final"; }).length, "Concluídas", "filtrarOS('final', true)", "fa-circle-check") +
+            st(m.filter(atrasada).length, "Atrasadas", "filtrarOS('atrasadas', true)", "fa-triangle-exclamation");
     }
 }
 
@@ -1223,6 +1405,7 @@ function abrirEditor(id) {
         '<label class="campo" id="cEdNome"><span>Nome *</span><input type="text" id="edNome" maxlength="30" value="' + esc(u.nome) + '"><em class="erro">Informe o nome.</em></label>' +
         '<label class="campo"><span>Função</span><input type="text" id="edFuncao" maxlength="40" placeholder="Ex: Eletricista" value="' + esc(u.funcao) + '"></label>' +
         '<label class="campo"><span>Telefone</span><input type="tel" id="edTel" maxlength="20" placeholder="(11) 99999-9999" value="' + esc(u.tel) + '"></label>' +
+        '<label class="campo"><span>Data de nascimento <small class="opc">(opcional · a equipe é avisada no aniversário)</small></span><input type="date" id="edNasc" value="' + esc(u.nasc || "") + '"></label>' +
         '<label class="campo"><span>Nova senha (4 números) — opcional</span><input type="password" id="edPin" inputmode="numeric" maxlength="4" placeholder="••••"></label>' +
         '<div class="sheet-acoes">' +
             '<button class="btn-sec" onclick="fecharOS()">Cancelar</button>' +
@@ -1349,6 +1532,7 @@ function salvarEditor() {
     u.nome = nome;
     u.funcao = $("edFuncao").value.trim() || (u.papel === "admin" ? "Líder de Manutenção" : (u.papel === "compras" ? "Compras" : "Técnico de Manutenção"));
     u.tel = $("edTel").value.trim();
+    u.nasc = $("edNasc").value || "";
     u.foto = edFoto;
     if (pin) u.pin = pin;
 
@@ -1391,11 +1575,15 @@ function addTecnico() {
 function removerTecnico(id) {
     var abertas = ordens.filter(function (o) { return o.tecId === id && o.status !== "final"; }).length;
     if (abertas) { toast("Reatribua as " + abertas + " OS abertas dele antes de remover"); return; }
-    if (!confirm("Remover " + nomeDe(id) + " da equipe?")) return;
-    usuarios = usuarios.filter(function (u) { return u.id !== id; });
-    salvar();
-    renderTudo();
-    toast("Técnico removido");
+    pedirConfirmacao({
+        ic: "fa-user-minus", titulo: "Remover da equipe?", sim: "Sim, remover",
+        texto: '<b>' + esc(nomeDe(id)) + '</b> perderá o acesso ao aplicativo. Essa ação não pode ser desfeita.'
+    }, function () {
+        usuarios = usuarios.filter(function (u) { return u.id !== id; });
+        salvar();
+        renderTudo();
+        toast("Técnico removido");
+    });
 }
 
 /* ----- Setores ----- */
@@ -1430,11 +1618,17 @@ function removerSetor(i) {
     var uso = ordens.filter(function (o) { return o.setor === nome; }).length;
     if (uso) { toast("'" + nome + "' está em uso por " + uso + " OS"); return; }
     if (setores.length <= 1) { toast("Mantenha ao menos um setor"); return; }
-    if (!confirm("Remover o setor '" + nome + "'?")) return;
-    setores.splice(i, 1);
-    salvar();
-    renderSetoresPerfil();
-    montarSelects();
+    pedirConfirmacao({
+        ic: "fa-location-dot", titulo: "Remover setor?", sim: "Sim, remover",
+        texto: 'O setor <b>' + esc(nome) + '</b> será removido da lista.'
+    }, function () {
+        var j = setores.indexOf(nome);
+        if (j === -1) return;
+        setores.splice(j, 1);
+        salvar();
+        renderSetoresPerfil();
+        montarSelects();
+    });
 }
 
 function exportar() {
@@ -1453,11 +1647,46 @@ function exportar() {
 }
 
 function limparTudo() {
-    if (!confirm("Apagar TODAS as ordens de serviço (com fotos)? Não pode ser desfeito.")) return;
-    ordens = [];
-    salvar();
-    renderTudo();
-    toast("Todas as OS foram apagadas");
+    pedirConfirmacao({
+        ic: "fa-triangle-exclamation", titulo: "Apagar todas as OS?", sim: "Sim, apagar tudo",
+        texto: '<b>Todas</b> as ordens de serviço serão apagadas, junto com as fotos. Essa ação não pode ser desfeita.'
+    }, function () {
+        ordens = [];
+        salvar();
+        renderTudo();
+        toast("Todas as OS foram apagadas");
+    });
+}
+
+/* Zerar conquistas e ranking de todos (recomeço geral).
+   Não apaga nenhuma OS: elas só deixam de valer para pontos, ranking e conquistas. */
+function zerarConquistas() {
+    if (!ehAdmin()) return;
+    pedirConfirmacao({
+        ic: "fa-rotate-left", titulo: "Zerar conquistas e ranking?", sim: "Sim, continuar",
+        texto: 'Vai zerar <b>as conquistas, o nível, os pontos e o ranking (semanal e mensal)</b> de <b>todos os técnicos</b>. ' +
+               'As ordens de serviço continuam salvas. Essa ação não pode ser desfeita.'
+    }, function () {
+        pedirConfirmacao({
+            ic: "fa-triangle-exclamation", titulo: "Tem certeza?", sim: "Zerar tudo agora", nao: "Cancelar",
+            texto: 'Todos os técnicos <b>começam do zero</b>. Se quiser guardar o histórico antes, exporte um backup em Dados e backup.'
+        }, function () {
+            ordens.forEach(function (o) { if (o.status === "final") o.zerada = true; });
+            empresa.zeroEm = hoje();
+            empresa.zeroTs = Date.now();
+            usuarios.forEach(function (u) {
+                if (u.papel !== "tecnico") return;
+                u.conq = {};
+                u.conqV = CONQ_VERSAO;
+                // o que não dá para zerar (ex.: foto e nascimento no perfil) entra sem festa
+                conqGanhas(statsTec(u.id)).forEach(function (c) { u.conq[c.id] = hoje(); });
+            });
+            conqFila = [];
+            salvar();
+            renderTudo();
+            toast("Conquistas e ranking zerados ✔");
+        });
+    });
 }
 
 /* ==========================================
@@ -1592,9 +1821,28 @@ function criarSetor() {
     toast("Setor '" + r + "' criado ✔");
 }
 
+var modoDesig = false;   // técnico criando uma OS para outro técnico
+
+function setModoDesig(on) {
+    modoDesig = !!on && !ehAdmin();
+    document.body.classList.toggle("modo-desig", modoDesig);
+    document.querySelectorAll("#segModo button").forEach(function (b) {
+        b.classList.toggle("on", (b.getAttribute("data-m") === "des") === modoDesig);
+    });
+    if (modoDesig && $("fData").value === hoje()) $("fData").value = somaDias(1);
+    if (!modoDesig && $("fData").value === somaDias(1)) $("fData").value = hoje();
+    montarTecSelect($("fTec").value);
+    rotulosForm();
+    if (viewAtual === "nova") {
+        var c = cabecalho("nova");
+        $("topoTitulo").textContent = c[0];
+        $("topoSub").textContent = c[1];
+    }
+}
+
 function montarTecSelect(valor) {
     $("fTec").innerHTML = '<option value="">Selecione o técnico</option>' +
-        tecnicos().map(function (u) {
+        tecnicos().filter(function (u) { return ehAdmin() || u.id !== sessao; }).map(function (u) {
             return '<option value="' + u.id + '">' + esc(u.nome) + " — " + esc(u.funcao) + "</option>";
         }).join("");
     $("fTec").value = valor ? String(valor) : "";
@@ -1608,10 +1856,12 @@ function setPrior(p) {
 }
 
 function rotulosForm() {
-    var adm = ehAdmin(), ed = $("fId").value;
+    var adm = ehAdmin() || modoDesig, ed = $("fId").value;
     $("lblData").textContent = adm ? "Data prevista" : "Data do serviço";
-    $("lblDesc").textContent = adm ? "Descrição do serviço a executar" : "Serviço realizado *";
-    $("fDesc").placeholder = adm ? "Descreva o defeito e o que deve ser feito..." : "Descreva o que foi feito em campo...";
+    var oEd = ed ? buscar(ed) : null;
+    var relDes = !!oEd && !adm && oEd.origem === "designada";
+    $("lblDesc").textContent = adm ? "Descrição do serviço a executar" : (relDes ? "Relatório do serviço (opcional)" : "Serviço realizado *");
+    $("fDesc").placeholder = adm ? "Descreva o defeito e o que deve ser feito..." : (relDes ? "O que foi feito, peças trocadas..." : "Descreva o que foi feito em campo...");
     $("btnSalvar").innerHTML = '<i class="fa-solid fa-check"></i> ' +
         (ed ? "Salvar alterações" : (adm ? "Criar e designar OS" : "Registrar serviço"));
 }
@@ -1626,6 +1876,12 @@ function novaOS(d) {
     $("fId").value = "";
     limparErros();
     montarSelects();
+    $("cModo").style.display = "";
+    $("fTitulo").readOnly = false;
+    $("fData").closest("label").style.display = "";
+    modoDesig = false;
+    document.body.classList.remove("modo-desig");
+    document.querySelectorAll("#segModo button").forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-m") === "reg"); });
     montarTecSelect("");
     $("fData").value = typeof d === "string" ? d : (ehAdmin() ? somaDias(1) : hoje());
     setPrior("media");
@@ -1639,7 +1895,9 @@ function novaOS(d) {
 
 function podeEditar(o) {
     if (ehAdmin()) return o.origem === "designada";
-    return o.origem === "campo" && o.tecId === sessao;
+    if (o.tecId !== sessao) return false;
+    // técnico edita o próprio relatório de campo e também a OS designada que já finalizou
+    return o.origem === "campo" || (o.origem === "designada" && o.status === "final");
 }
 
 function editarOS(id) {
@@ -1649,12 +1907,18 @@ function editarOS(id) {
     $("formOS").reset();
     limparErros();
     montarSelects();
+    $("cModo").style.display = "none";
+    modoDesig = false;
+    document.body.classList.remove("modo-desig");
     $("fId").value = o.id;
     $("fTitulo").value = o.titulo;
     $("fSetor").value = o.setor;
     $("fTipo").value = o.tipo;
     $("fData").value = o.data || "";
-    $("fDesc").value = o.desc || "";
+    var relDes = !ehAdmin() && o.origem === "designada";   // técnico editando OS designada: mexe no relatório, fotos e materiais
+    $("fDesc").value = relDes ? (o.rel || "") : (o.desc || "");
+    $("fTitulo").readOnly = relDes;
+    $("fData").closest("label").style.display = relDes ? "none" : "";
     montarTecSelect(o.tecId);
     setPrior(o.prior);
     formFotos = { antes: o.fotos.antes.slice(), depois: o.fotos.depois.slice() };
@@ -1667,7 +1931,9 @@ function editarOS(id) {
 
 function salvarOS(ev) {
     ev.preventDefault();
-    var adm = ehAdmin();
+    var adm = ehAdmin() || modoDesig;   // técnico designando também usa o fluxo do líder
+    var oEd0 = $("fId").value ? buscar($("fId").value) : null;
+    var relDes = !!oEd0 && !adm && oEd0.origem === "designada";   // técnico editando OS designada
     var ok = true;
     limparErros();
 
@@ -1682,7 +1948,7 @@ function salvarOS(ev) {
 
     if (adm && !$("fTec").value) { $("cTec").classList.add("invalido"); ok = false; }
 
-    if (!adm) {
+    if (!adm && !relDes) {
         if (!$("fDesc").value.trim()) { $("cDesc").classList.add("invalido"); ok = false; }
     }
 
@@ -1699,8 +1965,14 @@ function salvarOS(ev) {
 
     if (id) {
         var o = buscar(id);
-        for (var k in base) o[k] = base[k];
-        if (adm) {
+        if (!relDes) for (var k in base) o[k] = base[k];
+        if (relDes) {
+            o.setor = base.setor;
+            o.tipo = base.tipo;
+            o.rel = base.desc;
+            o.fotos = { antes: formFotos.antes.slice(), depois: formFotos.depois.slice() };
+            o.itens = formItens.slice();
+        } else if (adm) {
             var novoTec = Number($("fTec").value);
             o.prior = $("fPrior").value;
             if (novoTec !== o.tecId) {
@@ -1725,6 +1997,12 @@ function salvarOS(ev) {
             nova.status = "aguardando";
             nova.fotos = { antes: [], depois: [] };
             nova.itens = [];
+            if (modoDesig) {   // técnico designou: avisa o(s) líder(es)
+                usuarios.filter(function (u) { return u.papel === "admin"; }).forEach(function (l) {
+                    avisos.push({ id: Date.now() + "_" + l.id, para: l.id, osId: nova.id, em: Date.now(),
+                                  t: nomeDe(sessao) + " designou a OS " + num(nova.id) + " para " + nomeDe(nova.tecId), s: nova.titulo + " · " + nova.setor });
+                });
+            }
             toast("OS " + num(nova.id) + " enviada para " + nomeDe(nova.tecId) + " ✔");
         } else {
             nova.origem = "campo";
@@ -1813,7 +2091,9 @@ function abrirOS(id) {
         var doEstoque = o.itens.filter(function (i) { return i.estId; }).length;
         var manuais = o.itens.length - doEstoque;
         if (doEstoque) {
-            h += '<div class="banner"><i class="fa-solid fa-boxes-stacked"></i>Itens do estoque já foram <b>baixados do saldo</b> ao serem lançados nesta OS.</div>';
+            h += '<div class="banner"><i class="fa-solid fa-boxes-stacked"></i>' + (o.status === "final"
+                ? 'Itens do estoque <b>baixados do saldo</b> ao finalizar esta OS.'
+                : 'Itens do estoque serão <b>baixados do saldo quando a OS for finalizada</b>.') + '</div>';
         }
         if (adm && manuais) {
             h += o.baixa
@@ -1821,6 +2101,8 @@ function abrirOS(id) {
                 : '<button class="btn-pri verde cheio" onclick="toggleBaixa(' + o.id + ')"><i class="fa-solid fa-clipboard-check"></i> Marcar baixa no estoque</button>';
         }
     }
+
+    h += elogioHTML(o, adm);
 
     if (adm) {
         if (o.origem === "designada") {
@@ -1838,9 +2120,16 @@ function abrirOS(id) {
                  '<div class="sheet-acoes um"><button class="btn-pri verde" onclick="finalizarOS(' + o.id + ')"><i class="fa-solid fa-flag-checkered"></i> Finalizar OS</button></div>';
         } else if (!souEu && o.status === "aguardando") {
             h += '<div class="sheet-acoes um"><button class="btn-pri btn-desab" disabled><i class="fa-solid fa-lock"></i> Só ' + nome + ' pode aceitar</button></div>';
+        } else if (souEu && o.status === "final") {
+            h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar OS</button></div>';
         }
     } else if (souEu) {
         h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar relatório</button></div>';
+    }
+
+    // O técnico também pode passar a OS para outro técnico (como o líder)
+    if (!adm && souEu && o.origem === "designada" && o.status !== "final" && tecnicos().length > 1) {
+        h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="abrirAtribuir(' + o.id + ')"><i class="fa-solid fa-user-group"></i> Atribuir a outro técnico</button></div>';
     }
 
     $("sheet").innerHTML = h;
@@ -1877,35 +2166,797 @@ function aceitarOS(id) {
     toast("OS aceita! Bom trabalho 💪");
 }
 
+function abrirAtribuir(id) {
+    var o = buscar(id);
+    if (!o || o.origem !== "designada" || o.status === "final") return;
+    if (ehAdmin() || o.tecId !== sessao) return;
+    var outros = tecnicos().filter(function (u) { return u.id !== o.tecId; });
+    var h = '<div class="sheet-alca"></div><h2>Atribuir OS ' + num(o.id) + '</h2>' +
+        '<p class="dica" style="margin:0 0 12px">' + esc(o.titulo) + '</p>';
+    if (!outros.length) {
+        h += '<div class="vazio"><i class="fa-solid fa-user-slash"></i>Não há outro técnico cadastrado.</div>';
+    } else {
+        h += '<label class="campo"><span>Passar para</span><select id="atribTec"><option value="">Selecione o técnico</option>' +
+            outros.map(function (u) { return '<option value="' + u.id + '">' + esc(u.nome) + " — " + esc(u.funcao) + "</option>"; }).join("") +
+            '</select></label>' +
+            '<p class="dica">O técnico escolhido precisará aceitar a OS e o líder será avisado.</p>';
+    }
+    h += '<div class="sheet-acoes"><button class="btn-sec" onclick="abrirOS(' + o.id + ')">Cancelar</button>' +
+         (outros.length ? '<button class="btn-pri" style="margin-top:0" onclick="confirmarAtribuir(' + o.id + ')"><i class="fa-solid fa-check"></i> Atribuir</button>' : "") + '</div>';
+    $("sheet").innerHTML = h;
+}
+
+function confirmarAtribuir(id) {
+    var o = buscar(id);
+    if (!o || o.origem !== "designada" || o.status === "final") return;
+    if (ehAdmin() || o.tecId !== sessao) return;
+    var novo = Number($("atribTec").value);
+    if (!novo || novo === o.tecId || !userPorId(novo)) { toast("Escolha o técnico"); return; }
+    var antigo = sessao;
+    o.tecId = novo;
+    o.status = "aguardando";
+    o.aceitaEm = "";
+    // avisa o(s) líder(es)
+    usuarios.filter(function (u) { return u.papel === "admin"; }).forEach(function (l) {
+        avisos.push({ id: Date.now() + "_" + l.id, para: l.id, osId: o.id, em: Date.now(),
+                      t: nomeDe(antigo) + " passou a OS " + num(o.id) + " para " + nomeDe(novo), s: o.titulo + " · " + o.setor });
+    });
+    salvar();
+    fecharOS();
+    renderTudo();
+    toast("OS " + num(o.id) + " atribuída a " + nomeDe(novo) + " ✔");
+}
+
+// Antes de finalizar: cada peça do estoque lançada na OS precisa ter saldo (a baixa acontece agora)
+function faltaEstoque(o) {
+    var tot = {};
+    (o.itens || []).forEach(function (i) { if (i.estId) tot[i.estId] = arred((tot[i.estId] || 0) + i.qtd); });
+    for (var id in tot) {
+        var e = estItem(id);
+        if (!e) continue;
+        var saldo = saldoEstoque(e);
+        if (tot[id] > saldo) {
+            return "Sem saldo de " + e.nome + " para finalizar: precisa de " + fmtQtd(tot[id]) + " " + e.un +
+                   " e há " + fmtQtd(Math.max(saldo, 0)) + ". Ajuste a quantidade da peça.";
+        }
+    }
+    return "";
+}
+
 function finalizarOS(id) {
     var o = buscar(id);
     if (!o || o.status !== "andamento" || o.tecId !== sessao) return;
     if (itemPendente(o.id) && !addItem(o.id)) return;   // item preenchido e ainda não adicionado
+    var falta = faltaEstoque(o);
+    if (falta) { toast(falta); return; }
     var rel = $("sRel");
     if (rel) o.rel = rel.value;
     o.status = "final";
     o.concluida = hoje();
+    delete o.zerada;
     salvar();
     abrirOS(id);
     renderTudo();
     toast("OS finalizada ✔");
 }
 
-function excluirOS(id) {
+/* ==========================================
+   EQUIPE: aniversários, ranking, conquistas, meta e elogios
+   (tudo é calculado a partir das OS; só o aniversário, as conquistas
+   já comemoradas, a meta e o elogio ficam guardados)
+========================================== */
+function mesDe(s) { return s ? String(s).slice(0, 7) : ""; }
+function mesAtual() { return hoje().slice(0, 7); }
+function mesAnterior() {
+    var d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    return iso(d).slice(0, 7);
+}
+function nomeMes(ym) {
+    var n = MESES[Number(ym.slice(5, 7)) - 1] || "";
+    return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+/* ----- Aniversários ----- */
+function anoBissexto(a) { return (a % 4 === 0 && a % 100 !== 0) || a % 400 === 0; }
+
+function aniversariantesDoDia(data) {
+    var md = String(data).slice(5), ano = Number(String(data).slice(0, 4));
+    return usuarios.filter(function (u) {
+        if (!u.nasc || !/^\d{4}-\d{2}-\d{2}$/.test(u.nasc)) return false;
+        var n = u.nasc.slice(5);
+        if (n === "02-29" && !anoBissexto(ano)) n = "02-28";
+        return n === md;
+    });
+}
+
+function irNiver(data) {
+    fecharOS();
+    calSel = data;
+    var d = dataDe(data);
+    calMes = new Date(d.getFullYear(), d.getMonth(), 1);
+    ir("calendario");
+}
+
+function confeteHTML() {
+    var cores = ["#EC407A", "#FFCA28", "#42A5F5", "#66BB6A", "#AB47BC", "#FF7043"];
+    var s = "";
+    for (var i = 0; i < 24; i++) {
+        s += '<i style="left:' + Math.round(Math.random() * 100) + '%;background:' + cores[i % cores.length] +
+             ';animation-delay:' + (Math.random() * 3).toFixed(1) + 's;animation-duration:' + (2.8 + Math.random() * 2).toFixed(1) + 's"></i>';
+    }
+    return '<div class="confete">' + s + '</div>';
+}
+
+function festaHTML() {
+    var lista = aniversariantesDoDia(hoje()), h = "";
+    var eu = lista.filter(function (u) { return u.id === sessao; })[0];
+    if (eu) {
+        h += '<div class="festa">' + confeteHTML() + '<div class="festa-ic">🎉</div>' +
+             '<div><b>Parabéns, ' + esc(eu.nome) + '!</b><small>Hoje é o seu dia. A equipe de manutenção deseja muita saúde e sucesso!</small></div></div>';
+    }
+    return h;
+}
+
+/* ----- Meta da equipe ----- */
+function metaInfo() {
+    var m = mesAtual();
+    var feitas = ordens.filter(function (o) { return o.status === "final" && mesDe(o.concluida) === m; }).length;
+    return { meta: Number(empresa && empresa.meta) || 0, feitas: feitas };
+}
+
+function metaHTML() {
+    if (ehCompras()) return "";
+    var i = metaInfo(), adm = ehAdmin();
+    if (!i.meta) {
+        return adm ? '<div class="meta-card vazia" onclick="abrirMeta()"><i class="fa-solid fa-bullseye"></i>' +
+            '<div><b>Meta da equipe</b><small>Toque para definir quantas OS a equipe quer finalizar por mês</small></div></div>' : "";
+    }
+    var pct = Math.min(100, Math.round(i.feitas * 100 / i.meta)), bateu = i.feitas >= i.meta;
+    return '<div class="meta-card' + (bateu ? " ok" : "") + '"' + (adm ? ' onclick="abrirMeta()"' : "") + '>' +
+        '<div class="meta-topo"><span><i class="fa-solid fa-bullseye"></i> Meta de ' + nomeMes(mesAtual()) + '</span><b>' + i.feitas + ' / ' + i.meta + '</b></div>' +
+        '<div class="meta-barra"><i style="width:' + pct + '%"></i></div>' +
+        '<small>' + (bateu ? '🎉 Meta batida! Parabéns, equipe!' + (i.feitas > i.meta ? ' (+' + (i.feitas - i.meta) + ')' : '')
+                            : 'Faltam ' + (i.meta - i.feitas) + (i.meta - i.feitas === 1 ? ' OS finalizada' : ' OS finalizadas') + ' para bater a meta') + '</small></div>';
+}
+
+function abrirMeta() {
     if (!ehAdmin()) return;
-    if (!confirm("Excluir a OS " + num(id) + "?")) return;
-    ordens = ordens.filter(function (o) { return o.id !== Number(id); });
+    var i = metaInfo();
+    var h = '<div class="sheet-alca"></div><h2>🎯 Meta da equipe</h2>' +
+        '<p class="dica" style="margin:0 0 12px">Quantas OS finalizadas a equipe quer fechar por mês. A meta vale para todos os meses até você mudar.</p>' +
+        '<label class="campo"><span>OS finalizadas por mês</span><input type="text" id="metaVal" inputmode="numeric" maxlength="4" placeholder="Ex: 30" value="' + (i.meta || "") + '"></label>' +
+        '<div class="sheet-acoes"><button class="btn-sec" onclick="fecharOS()">Cancelar</button>' +
+        '<button class="btn-pri" style="margin-top:0" onclick="salvarMeta()"><i class="fa-solid fa-check"></i> Salvar</button></div>' +
+        (i.meta ? '<div class="sheet-acoes um" style="margin-top:10px"><button class="btn-perigo" onclick="removerMeta()"><i class="fa-solid fa-ban"></i> Remover meta</button></div>' : "");
+    $("sheet").innerHTML = h;
+    $("overlay").classList.add("on");
+    $("sheet").classList.add("on");
+    document.body.classList.add("folha-aberta");
+}
+
+function salvarMeta() {
+    var n = Math.floor(Number(String($("metaVal").value).replace(/\D/g, "")) || 0);
+    if (n < 1) { toast("Informe um número maior que zero"); return; }
+    empresa.meta = n;
     salvar();
     fecharOS();
     renderTudo();
-    toast("OS excluída");
+    toast("Meta definida ✔");
+}
+
+function removerMeta() {
+    empresa.meta = 0;
+    salvar();
+    fecharOS();
+    renderTudo();
+    toast("Meta removida");
+}
+
+/* ----- Pontos e ranking do mês ----- */
+function osDoTec(tecId) {
+    return ordens.filter(function (o) { return o.tecId === tecId && o.status === "final" && o.concluida && !o.zerada; });
+}
+function noPrazo(o) { return o.origem === "designada" && !!o.data && o.concluida <= o.data; }
+function temFotos(o) {
+    return !!(o.fotos && o.fotos.antes && o.fotos.depois && o.fotos.antes.length && o.fotos.depois.length);
+}
+function pontosOS(o) {
+    var p = 10;                                                    // OS finalizada
+    if (noPrazo(o)) p += 5;                                        // entregue no prazo
+    if (temFotos(o)) p += 3;                                       // fotos de antes e depois
+    if (o.origem === "designada" && (o.rel || "").trim()) p += 2;  // relatório preenchido
+    if (o.elogio) p += 5;                                          // elogio do líder
+    return p;
+}
+function pontosDoMes(tecId, mes) {
+    var t = 0, n = 0;
+    osDoTec(tecId).forEach(function (o) {
+        if (mesDe(o.concluida) === mes) { t += pontosOS(o); n++; }
+    });
+    return { pts: t, n: n };
+}
+function rankingMes(mes) {
+    return usuarios.filter(function (u) { return u.papel === "tecnico"; }).map(function (u) {
+        var r = pontosDoMes(u.id, mes);
+        return { u: u, pts: r.pts, n: r.n };
+    }).sort(function (a, b) { return b.pts - a.pts || b.n - a.n || a.u.nome.localeCompare(b.u.nome); });
+}
+
+/* ----- Ranking semanal (segunda a domingo) ----- */
+function addDias(data, n) {
+    var d = dataDe(data);
+    d.setDate(d.getDate() + n);
+    return iso(d);
+}
+function semanaIni(data) {   // segunda-feira da semana de "data"
+    var d = dataDe(data);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return iso(d);
+}
+function pontosDoPeriodo(tecId, ini, fim) {
+    var t = 0, n = 0;
+    osDoTec(tecId).forEach(function (o) {
+        if (o.concluida >= ini && o.concluida <= fim) { t += pontosOS(o); n++; }
+    });
+    return { pts: t, n: n };
+}
+function rankingSemana(ini) {
+    var fim = addDias(ini, 6);
+    return usuarios.filter(function (u) { return u.papel === "tecnico"; }).map(function (u) {
+        var r = pontosDoPeriodo(u.id, ini, fim);
+        return { u: u, pts: r.pts, n: r.n };
+    }).sort(function (a, b) { return b.pts - a.pts || b.n - a.n || a.u.nome.localeCompare(b.u.nome); });
+}
+// vencedores da semana: quem empatar em pontos e em OS com o 1º divide o título
+function vencedoresSemana(ini) {
+    var rk = rankingSemana(ini), topo = rk[0];
+    if (!topo || topo.pts <= 0) return [];
+    return rk.filter(function (x) { return x.pts === topo.pts && x.n === topo.n; });
+}
+
+var rankModo = "semana";
+function setRankModo(m) { rankModo = m; renderRanking(); }
+
+function renderRanking() {
+    var box = $("rankCard");
+    if (!box) return;
+    var sem = rankModo !== "mes";
+    var ini = semanaIni(hoje());
+    var r = sem ? rankingSemana(ini) : rankingMes(mesAtual());
+    if (!r.length) { box.style.display = "none"; return; }
+    box.style.display = "";
+    var medalhas = ["🥇", "🥈", "🥉"];
+    var com = r.filter(function (x) { return x.pts > 0; });
+    var h = '<div class="form-titulo"><i class="fa-solid fa-trophy"></i> ' +
+        (sem ? 'Ranking da semana <small class="conq-cont">' + fmtData(ini).slice(0, 5) + ' a ' + fmtData(addDias(ini, 6)).slice(0, 5) + '</small>'
+             : 'Ranking de ' + nomeMes(mesAtual())) + '</div>' +
+        '<div class="rank-abas"><button type="button" class="' + (sem ? "on" : "") + '" onclick="setRankModo(\'semana\')">Semana</button>' +
+        '<button type="button" class="' + (sem ? "" : "on") + '" onclick="setRankModo(\'mes\')">Mês</button></div>';
+
+    if (com.length) {
+        var ordemPod = com.length >= 3 ? [1, 0, 2] : com.length === 2 ? [1, 0] : [0];
+        h += '<div class="podio">' + ordemPod.map(function (i) {
+            var x = com[i];
+            return '<div class="pod pos' + (i + 1) + '" onclick="abrirConquistas(' + x.u.id + ')">' +
+                (i === 0 ? '<span class="pod-coroa">👑</span>' : '') +
+                avatarHTML(x.u, "pod-av") + '<b>' + esc(x.u.nome) + '</b><small>' + x.pts + ' pts</small>' +
+                '<div class="pod-bloco">' + medalhas[i] + '</div></div>';
+        }).join("") + '</div>';
+    } else {
+        h += '<p class="dica" style="margin:0 0 10px">Ninguém pontuou ' + (sem ? "nesta semana" : "neste mês") + ' ainda. Finalize uma OS para abrir a disputa!</p>';
+    }
+
+    h += r.map(function (x, i) {
+        var pos = x.pts > 0 && i < 3 ? medalhas[i] : (i + 1) + "º";
+        return '<div class="rank-linha' + (x.u.id === sessao ? " eu" : "") + '" onclick="abrirConquistas(' + x.u.id + ')">' +
+            '<span class="rk-pos">' + pos + '</span>' + avatarHTML(x.u, "rk-av") +
+            '<div class="rk-tx"><b>' + esc(x.u.nome) + (x.u.id === sessao ? " (você)" : "") + '</b>' +
+            '<small>' + x.n + (x.n === 1 ? " OS finalizada" : " OS finalizadas") + '</small></div>' +
+            '<span class="rk-pts">' + x.pts + '<small>pts</small></span></div>';
+    }).join("");
+
+    if (sem) {
+        var antIni = addDias(ini, -7), venc = vencedoresSemana(antIni);
+        if (venc.length) h += '<p class="dica" style="margin:12px 0 0">👑 Campeão da semana passada: <b>' +
+            venc.map(function (x) { return esc(x.u.nome); }).join(", ") + '</b> (' + venc[0].pts + ' pts)</p>';
+        h += '<p class="dica" style="margin:8px 0 0">O ranking recomeça toda segunda-feira. Quem termina a semana em 1º lugar ganha <b>1 ponto de semana vencida</b>, que conta para as conquistas lendárias.</p>';
+        var eu = user();
+        if (eu && eu.papel === "tecnico") {
+            var ns = statsTec(eu.id).semanas;
+            h += '<p class="dica" style="margin:8px 0 0">🏆 Semanas vencidas por você: <b>' + ns + '</b></p>';
+        }
+    } else {
+        var ant = rankingMes(mesAnterior()).filter(function (x) { return x.pts > 0; })[0];
+        if (ant) h += '<p class="dica" style="margin:12px 0 0">👑 Técnico do mês passado: <b>' + esc(ant.u.nome) + '</b> (' + ant.pts + ' pts)</p>';
+    }
+    h += '<p class="dica" style="margin:8px 0 0">Pontos: 10 por OS finalizada · +5 no prazo · +3 fotos de antes e depois · +2 relatório · +5 elogio do líder. Toque em alguém para ver as conquistas.</p>';
+    box.innerHTML = h;
+}
+
+/* ----- Conquistas ----- */
+var CONQ_VERSAO = 3;   // sobe quando entram conquistas novas (o que já foi merecido entra sem festa)
+
+var CONQ_TIER = {
+    1: { n: "Bronze", xp: 5 },
+    2: { n: "Prata",  xp: 10 },
+    3: { n: "Ouro",   xp: 20 },
+    4: { n: "Platina", xp: 40 }
+};
+
+var CONQ_NIVEIS = [
+    { x: 0,    n: "Aprendiz" },
+    { x: 15,   n: "Ajudante" },
+    { x: 40,   n: "Técnico" },
+    { x: 80,   n: "Técnico Pleno" },
+    { x: 140,  n: "Técnico Sênior" },
+    { x: 220,  n: "Especialista" },
+    { x: 340,  n: "Mestre" },
+    { x: 500,  n: "Mestre da Manutenção" },
+    { x: 750,  n: "Lenda" },
+    { x: 1000, n: "Imortal" }
+];
+
+var CONQ_CATS = [
+    { id: "vol",  n: "Volume de serviço",       ic: "fa-wrench" },
+    { id: "pra",  n: "Prazo e agilidade",       ic: "fa-clock" },
+    { id: "qua",  n: "Qualidade e registro",    ic: "fa-camera" },
+    { id: "ver",  n: "Versatilidade",           ic: "fa-shapes" },
+    { id: "con",  n: "Constância",              ic: "fa-fire" },
+    { id: "eqp",  n: "Reconhecimento e equipe", ic: "fa-star" },
+    { id: "sec",  n: "Secretas",                ic: "fa-user-secret" }
+];
+
+function cq(id, cat, tier, n, d, ic, cor, meta, campo, sec) {
+    return { id: id, cat: cat, tier: tier, n: n, d: d, ic: ic, cor: cor, meta: meta, sec: !!sec,
+             v: function (s) { return typeof campo === "function" ? campo(s) : s[campo]; } };
+}
+
+var CONQUISTAS = [
+    /* ---- Volume de serviço ---- */
+    cq("primeira", "vol", 1, "Primeira OS",           "Finalize a sua primeira OS",                  "fa-flag-checkered", "#43A047", 1,   "total"),
+    cq("dez",      "vol", 1, "Pegando o ritmo",       "10 OS finalizadas",                           "fa-bolt",           "#1E88E5", 10,  "total"),
+    cq("v25",      "vol", 2, "Em campo",              "25 OS finalizadas",                           "fa-person-running", "#00897B", 25,  "total"),
+    cq("cinq",     "vol", 2, "Veterano",              "50 OS finalizadas",                           "fa-medal",          "#8E24AA", 50,  "total"),
+    cq("cem",      "vol", 3, "Lenda da Manutenção",   "100 OS finalizadas",                          "fa-crown",          "#F9A825", 100, "total"),
+    cq("v250",     "vol", 4, "Máquina de OS",         "250 OS finalizadas",                          "fa-gears",          "#00ACC1", 250, "total"),
+    cq("v500",     "vol", 4, "Patrimônio da fábrica", "500 OS finalizadas",                          "fa-industry",       "#5E35B1", 500, "total"),
+    cq("mes10",    "vol", 1, "Mês de peso",           "Finalize 10 OS em um mesmo mês",              "fa-calendar-day",   "#1E88E5", 10,  "melhorMes"),
+    cq("mes20",    "vol", 2, "Mês de ouro",           "Finalize 20 OS em um mesmo mês",              "fa-calendar-week",  "#F9A825", 20,  "melhorMes"),
+    cq("mes30",    "vol", 3, "Mês lendário",          "Finalize 30 OS em um mesmo mês",              "fa-fire-flame-curved", "#E53935", 30, "melhorMes"),
+    cq("dia3",     "vol", 1, "Dia cheio",             "Finalize 3 OS no mesmo dia",                  "fa-list-check",     "#3949AB", 3,   "maxDia"),
+    cq("dia5",     "vol", 2, "Maratonista",           "Finalize 5 OS no mesmo dia",                  "fa-stopwatch",      "#EF6C00", 5,   "maxDia"),
+    cq("pts100",   "vol", 1, "Pontuador",             "Some 100 pontos no total",                    "fa-coins",          "#FBC02D", 100,  "pts"),
+    cq("pts500",   "vol", 2, "Colecionador de pontos","Some 500 pontos no total",                    "fa-sack-dollar",    "#F9A825", 500,  "pts"),
+    cq("pts1500",  "vol", 3, "Banco de pontos",       "Some 1.500 pontos no total",                  "fa-vault",          "#8E24AA", 1500, "pts"),
+    cq("pts5000",  "vol", 4, "Milionário da oficina", "Some 5.000 pontos no total",                  "fa-gem",            "#00ACC1", 5000, "pts"),
+
+    /* ---- Prazo e agilidade ---- */
+    cq("pont",     "pra", 1, "Pontual",               "5 OS designadas seguidas entregues no prazo", "fa-clock",          "#00897B", 5,   "seq"),
+    cq("seq10",    "pra", 2, "Relógio suíço",         "10 OS designadas seguidas no prazo",          "fa-hourglass-end",  "#00796B", 10,  "seq"),
+    cq("seq20",    "pra", 3, "Sem atraso",            "20 OS designadas seguidas no prazo",          "fa-shield-halved",  "#2E7D32", 20,  "seq"),
+    cq("seq40",    "pra", 4, "Hora certa",            "40 OS designadas seguidas no prazo",          "fa-business-time",  "#00ACC1", 40,  "seq"),
+    cq("p25",      "pra", 2, "Palavra dada",          "25 OS entregues no prazo (no total)",         "fa-handshake",      "#43A047", 25,  "prazoTot"),
+    cq("p100",     "pra", 3, "Confiável",             "100 OS entregues no prazo (no total)",        "fa-circle-check",   "#1B5E20", 100, "prazoTot"),
+    cq("mes",      "pra", 2, "Mês perfeito",          "Um mês com 3 OS designadas ou mais, todas no prazo", "fa-calendar-check", "#D81B60", 1, "mesesPerf"),
+    cq("perf3",    "pra", 3, "Trimestre perfeito",    "3 meses perfeitos (3 OS ou mais, todas no prazo)", "fa-award",    "#AD1457", 3,   "mesesPerf"),
+    cq("perf6",    "pra", 4, "Semestre de ouro",      "6 meses perfeitos (3 OS ou mais, todas no prazo)", "fa-trophy",   "#F9A825", 6,   "mesesPerf"),
+    cq("ad5",      "pra", 1, "Adiantado",             "Entregue 5 OS designadas antes do prazo",     "fa-forward",        "#3949AB", 5,   "adiant"),
+    cq("ad25",     "pra", 2, "Sempre na frente",      "Entregue 25 OS designadas antes do prazo",    "fa-angles-right",   "#283593", 25,  "adiant"),
+    cq("rap",      "pra", 1, "Rápido no gatilho",     "Aceite 5 OS no mesmo dia em que foram abertas", "fa-hand-point-right", "#3949AB", 5, "rapido"),
+    cq("rap25",    "pra", 2, "Reflexo rápido",        "Aceite 25 OS no mesmo dia em que foram abertas", "fa-bolt-lightning", "#5E35B1", 25, "rapido"),
+    cq("res10",    "pra", 2, "Resolvedor",            "Aceite e finalize a OS no mesmo dia, 10 vezes", "fa-check-double", "#00897B", 10,  "resolvido"),
+
+    /* ---- Qualidade e registro ---- */
+    cq("doc",      "qua", 1, "Documentador",          "10 OS com fotos de antes e depois",           "fa-camera",         "#EF6C00", 10,  "docs"),
+    cq("doc50",    "qua", 2, "Fotógrafo",             "50 OS com fotos de antes e depois",           "fa-camera-retro",   "#E65100", 50,  "docs"),
+    cq("doc150",   "qua", 3, "Arquivo vivo",          "150 OS com fotos de antes e depois",          "fa-images",         "#BF360C", 150, "docs"),
+    cq("fot100",   "qua", 2, "Álbum da fábrica",      "Envie 100 fotos em OS",                       "fa-photo-film",     "#EF6C00", 100, "fotos"),
+    cq("fot400",   "qua", 3, "Acervo fotográfico",    "Envie 400 fotos em OS",                       "fa-panorama",       "#D84315", 400, "fotos"),
+    cq("rel10",    "qua", 1, "Bom de relatório",      "Preencha o relatório em 10 OS designadas",    "fa-file-pen",       "#6D4C41", 10,  "rels"),
+    cq("rel50",    "qua", 2, "Relator oficial",       "Preencha o relatório em 50 OS designadas",    "fa-file-lines",     "#4E342E", 50,  "rels"),
+    cq("mao",      "qua", 1, "Mão na massa",          "Lance materiais em 10 OS",                    "fa-screwdriver-wrench", "#6D4C41", 10, "mat"),
+    cq("mat50",    "qua", 2, "Caixa de ferramentas cheia", "Lance materiais em 50 OS",               "fa-toolbox",        "#5D4037", 50,  "mat"),
+    cq("est10",    "qua", 1, "Estoque em dia",        "Use peças do estoque em 10 OS",               "fa-boxes-stacked",  "#00838F", 10,  "estq"),
+    cq("est50",    "qua", 2, "Cliente do almoxarifado","Use peças do estoque em 50 OS",              "fa-warehouse",      "#006064", 50,  "estq"),
+    cq("im5",      "qua", 2, "OS impecável",          "5 OS designadas completas: no prazo, com fotos, relatório e materiais", "fa-clipboard-check", "#2E7D32", 5, "impec"),
+    cq("im25",     "qua", 3, "Padrão ouro",           "25 OS designadas completas",                  "fa-star-half-stroke","#F9A825", 25, "impec"),
+    cq("im75",     "qua", 4, "Perfeccionista",        "75 OS designadas completas",                  "fa-certificate",    "#00ACC1", 75,  "impec"),
+
+    /* ---- Versatilidade ---- */
+    cq("tipos",    "ver", 2, "Faz-tudo",              "Finalize OS dos 4 tipos: corretiva, preventiva, preditiva e melhoria", "fa-shapes", "#7B1FA2", 4, "tipos"),
+    cq("corr10",   "ver", 1, "Bombeiro",              "Finalize 10 OS corretivas",                   "fa-fire-extinguisher","#E53935", 10, "corr"),
+    cq("corr50",   "ver", 2, "Caçador de pane",       "Finalize 50 OS corretivas",                   "fa-screwdriver",    "#C62828", 50,  "corr"),
+    cq("prev10",   "ver", 1, "Cuidador",              "Finalize 10 OS preventivas",                  "fa-oil-can",        "#1E88E5", 10,  "prev"),
+    cq("prev50",   "ver", 2, "Guardião das máquinas", "Finalize 50 OS preventivas",                  "fa-shield",         "#1565C0", 50,  "prev"),
+    cq("pred10",   "ver", 1, "Olho clínico",          "Finalize 10 OS preditivas",                   "fa-magnifying-glass-chart", "#00897B", 10, "pred"),
+    cq("pred25",   "ver", 2, "Vidente de falhas",     "Finalize 25 OS preditivas",                   "fa-eye",            "#00695C", 25,  "pred"),
+    cq("mel3",     "ver", 1, "Ideia na prática",      "Finalize 3 melhorias",                        "fa-lightbulb",      "#F9A825", 3,   "mel"),
+    cq("mel15",    "ver", 3, "Inovador",              "Finalize 15 melhorias",                       "fa-rocket",         "#8E24AA", 15,  "mel"),
+    cq("urg5",     "ver", 1, "Sob pressão",           "Finalize 5 OS urgentes",                      "fa-triangle-exclamation", "#E53935", 5, "urg"),
+    cq("urg25",    "ver", 3, "Herói da urgência",     "Finalize 25 OS urgentes",                     "fa-kit-medical",    "#B71C1C", 25,  "urg"),
+    cq("set3",     "ver", 1, "Conhece a fábrica",     "Atenda OS de 3 setores diferentes",           "fa-map-location-dot","#3949AB", 3,  "setores"),
+    cq("set5",     "ver", 2, "Cartógrafo",            "Atenda OS de 5 setores diferentes",           "fa-map",            "#283593", 5,   "setores"),
+    cq("set8",     "ver", 3, "Dono do pedaço",        "Atenda OS de 8 setores diferentes",           "fa-earth-americas", "#1A237E", 8,   "setores"),
+    cq("cam5",     "ver", 1, "Iniciativa",            "Registre 5 serviços por conta própria",       "fa-hand-fist",      "#EF6C00", 5,   "campo"),
+    cq("cam25",    "ver", 2, "Mão própria",           "Registre 25 serviços por conta própria",      "fa-hand",           "#E65100", 25,  "campo"),
+    cq("cam75",    "ver", 3, "Faro de problema",      "Registre 75 serviços por conta própria",      "fa-binoculars",     "#BF360C", 75,  "campo"),
+
+    /* ---- Constância ---- */
+    cq("dias3",    "con", 1, "Três na linha",         "Finalize OS em 3 dias úteis seguidos",        "fa-link",           "#43A047", 3,   "seqDias"),
+    cq("dias5",    "con", 2, "Semana cheia",          "Finalize OS em 5 dias úteis seguidos",        "fa-calendar-week",  "#2E7D32", 5,   "seqDias"),
+    cq("dias10",   "con", 3, "Duas semanas de fogo",  "Finalize OS em 10 dias úteis seguidos",       "fa-fire",           "#EF6C00", 10,  "seqDias"),
+    cq("dias20",   "con", 4, "Mês sem parar",         "Finalize OS em 20 dias úteis seguidos",       "fa-fire-flame-curved", "#D84315", 20, "seqDias"),
+    cq("ativo20",  "con", 1, "Presença",              "Finalize OS em 20 dias diferentes",           "fa-user-check",     "#1E88E5", 20,  "dias"),
+    cq("ativo50",  "con", 2, "Peça da engrenagem",    "Finalize OS em 50 dias diferentes",           "fa-gear",           "#1565C0", 50,  "dias"),
+    cq("ativo150", "con", 3, "Alicerce da equipe",    "Finalize OS em 150 dias diferentes",          "fa-building-columns","#0D47A1", 150, "dias"),
+    cq("fds3",     "con", 2, "Plantão",               "Finalize OS em fim de semana, 3 vezes",       "fa-moon",           "#5E35B1", 3,   "fimSem"),
+    cq("fds10",    "con", 3, "Sempre de prontidão",   "Finalize OS em fim de semana, 10 vezes",      "fa-tower-broadcast","#4527A0", 10,  "fimSem"),
+
+    /* ---- Reconhecimento e equipe ---- */
+    cq("elogio",   "eqp", 1, "Reconhecido",           "Receba um elogio do líder",                   "fa-star",           "#FBC02D", 1,   "elogios"),
+    cq("estrela",  "eqp", 2, "Queridinho do líder",   "Receba 5 elogios do líder",                   "fa-heart",          "#E53935", 5,   "elogios"),
+    cq("elo10",    "eqp", 3, "Ídolo da equipe",       "Receba 10 elogios do líder",                  "fa-hands-clapping", "#D81B60", 10,  "elogios"),
+    cq("elo25",    "eqp", 4, "Unanimidade",           "Receba 25 elogios do líder",                  "fa-face-grin-stars","#F9A825", 25,  "elogios"),
+    cq("tit1",     "eqp", 3, "Técnico do mês",        "Termine um mês em 1º lugar no ranking",       "fa-crown",          "#F9A825", 1,   "titulos"),
+    cq("tit3",     "eqp", 4, "Tricampeão",            "Termine 3 meses em 1º lugar no ranking",      "fa-trophy",         "#00ACC1", 3,   "titulos"),
+    cq("sem1",     "eqp", 2, "Rei da semana",         "Termine uma semana (seg a dom) em 1º lugar no ranking",  "fa-chess-king",   "#F9A825", 1,  "semanas"),
+    cq("sem5",     "eqp", 3, "Dinastia",              "Venha em 1º lugar em 5 semanas",              "fa-chess-rook",     "#EF6C00", 5,   "semanas"),
+    cq("sem10",    "eqp", 4, "Imbatível",             "Venha em 1º lugar em 10 semanas",             "fa-dragon",         "#D81B60", 10,  "semanas"),
+    cq("sem25",    "eqp", 4, "Lenda viva",            "Venha em 1º lugar em 25 semanas",             "fa-hat-wizard",     "#5E35B1", 25,  "semanas"),
+    cq("sem52",    "eqp", 4, "Imortal da fábrica",    "Venha em 1º lugar em 52 semanas",             "fa-infinity",       "#00ACC1", 52,  "semanas"),
+    cq("comp1",    "eqp", 1, "Pedido feito",          "Faça uma solicitação de compra",              "fa-cart-shopping",  "#3949AB", 1,   "compras"),
+    cq("comp10",   "eqp", 2, "Olho no estoque",       "Faça 10 solicitações de compra",              "fa-cart-flatbed",   "#283593", 10,  "compras"),
+    cq("perfil",   "eqp", 1, "Crachá completo",       "Coloque a sua foto e a data de nascimento no perfil", "fa-id-badge", "#00897B", 1,  "perfil"),
+
+    /* ---- Secretas ---- */
+    cq("trator",   "sec", 3, "Trator",                "Finalize 8 OS no mesmo dia",                  "fa-tractor",        "#6D4C41", 8,   "maxDia", true),
+    cq("elomes",   "sec", 3, "Estrela do mês",        "Receba 3 elogios do líder no mesmo mês",      "fa-wand-magic-sparkles", "#FBC02D", 3, "elogMes", true),
+    cq("domingo",  "sec", 2, "Domingo de dedicação",  "Finalize uma OS em um domingo",               "fa-sun",            "#F9A825", 1,   "dom", true),
+    cq("virada",   "sec", 2, "Virada de ano",         "Finalize uma OS em 31/12 ou 01/01",           "fa-champagne-glasses","#8E24AA", 1, "virada", true),
+    cq("trab",     "sec", 2, "Dia do Trabalhador",    "Finalize uma OS em 1º de maio",               "fa-helmet-safety",  "#EF6C00", 1,   "trab", true)
+];
+
+/* ----- Nível (a soma dos XP das conquistas feitas) ----- */
+function conqGanhas(s) {
+    return CONQUISTAS.filter(function (c) { return c.v(s) >= c.meta; });
+}
+
+function conqXP(s) {
+    var t = 0;
+    conqGanhas(s).forEach(function (c) { t += CONQ_TIER[c.tier].xp; });
+    return t;
+}
+
+function conqNivel(xp) {
+    var i = 0;
+    for (var k = 0; k < CONQ_NIVEIS.length; k++) { if (xp >= CONQ_NIVEIS[k].x) i = k; }
+    var atual = CONQ_NIVEIS[i], prox = CONQ_NIVEIS[i + 1] || null;
+    return {
+        i: i, num: i + 1, nome: atual.n, xp: xp, prox: prox,
+        pct: prox ? Math.round((xp - atual.x) * 100 / (prox.x - atual.x)) : 100
+    };
+}
+
+function nivelHTML(s) {
+    var nv = conqNivel(conqXP(s));
+    return '<div class="conq-nivel"><div class="conq-nivel-topo"><b>Nível ' + nv.num + ' · ' + esc(nv.nome) + '</b><small>' + nv.xp + ' XP</small></div>' +
+        '<div class="conq-barra xp"><i style="width:' + nv.pct + '%"></i></div>' +
+        '<small>' + (nv.prox ? 'Faltam ' + (nv.prox.x - nv.xp) + ' XP para ' + esc(nv.prox.n) : 'Nível máximo alcançado! 🏆') + '</small></div>';
+}
+
+/* ----- Estatísticas de um técnico (tudo calculado das OS) ----- */
+function proxUtil(s) {
+    var d = dataDe(s);
+    do { d.setDate(d.getDate() + 1); } while (d.getDay() === 0 || d.getDay() === 6);
+    return iso(d);
+}
+
+function statsTec(tecId) {
+    function chave(o) { return o.concluida + "|" + ("000000" + o.id).slice(-6); }
+    var fin = osDoTec(tecId).sort(function (a, b) { return chave(a).localeCompare(chave(b)); });
+    var s = {
+        total: fin.length, docs: 0, mat: 0, rapido: 0, elogios: 0, seq: 0, perfeito: false,
+        pts: 0, fotos: 0, rels: 0, estq: 0, impec: 0, prazoTot: 0, adiant: 0, resolvido: 0,
+        corr: 0, prev: 0, pred: 0, mel: 0, tipos: 0, urg: 0, setores: 0, campo: 0,
+        dias: 0, seqDias: 0, maxDia: 0, melhorMes: 0, fimSem: 0, dom: 0, virada: 0, trab: 0,
+        mesesPerf: 0, titulos: 0, semanas: 0, elogMes: 0, compras: 0, perfil: 0
+    };
+    var corrente = 0, meses = {}, tiposSet = {}, setoresSet = {}, diasSet = {}, porDia = {}, porMes = {}, elogiosMes = {};
+
+    fin.forEach(function (o) {
+        var c = o.concluida, m = mesDe(c), dow = dataDe(c).getDay(), md = String(c).slice(5);
+        var prazo = noPrazo(o), rel = (o.rel || "").trim();
+        var tipo = String(o.tipo || "").toLowerCase();
+
+        s.pts += pontosOS(o);
+        if (temFotos(o)) s.docs++;
+        if (o.fotos) s.fotos += (o.fotos.antes ? o.fotos.antes.length : 0) + (o.fotos.depois ? o.fotos.depois.length : 0);
+        if (o.itens && o.itens.length) s.mat++;
+        if (o.itens && o.itens.some(function (i) { return i.estId; })) s.estq++;
+        if (o.elogio) { s.elogios++; elogiosMes[m] = (elogiosMes[m] || 0) + 1; }
+
+        porDia[c] = (porDia[c] || 0) + 1;
+        porMes[m] = (porMes[m] || 0) + 1;
+        diasSet[c] = true;
+        if (o.setor) setoresSet[o.setor] = true;
+        if (dow === 0) s.dom++;
+        if (dow === 0 || dow === 6) s.fimSem++;
+        if (md === "12-31" || md === "01-01") s.virada++;
+        if (md === "05-01") s.trab++;
+
+        if (tipo.indexOf("corret") === 0) { s.corr++; tiposSet.corr = true; }
+        else if (tipo.indexOf("prevent") === 0) { s.prev++; tiposSet.prev = true; }
+        else if (tipo.indexOf("predit") === 0) { s.pred++; tiposSet.pred = true; }
+        else if (tipo.indexOf("melhor") === 0) { s.mel++; tiposSet.mel = true; }
+
+        if (o.origem === "campo") s.campo++;
+
+        if (o.origem === "designada") {
+            if (o.prior === "urgente") s.urg++;
+            if (rel) s.rels++;
+            if (o.aceitaEm && o.criada && o.aceitaEm === o.criada) s.rapido++;
+            if (o.aceitaEm && o.aceitaEm === c) s.resolvido++;
+            if (o.data && c < o.data) s.adiant++;
+            if (prazo) { s.prazoTot++; corrente++; if (corrente > s.seq) s.seq = corrente; } else { corrente = 0; }
+            if (prazo && rel && temFotos(o) && o.itens && o.itens.length) s.impec++;
+            if (!meses[m]) meses[m] = { n: 0, ok: 0 };
+            meses[m].n++;
+            if (prazo) meses[m].ok++;
+        }
+    });
+
+    for (var k in meses) { if (meses[k].n >= 3 && meses[k].n === meses[k].ok) s.mesesPerf++; }
+    s.perfeito = s.mesesPerf > 0;
+    s.tipos = Object.keys(tiposSet).length;
+    s.setores = Object.keys(setoresSet).length;
+    s.maxDia = Math.max.apply(null, [0].concat(Object.keys(porDia).map(function (d) { return porDia[d]; })));
+    s.melhorMes = Math.max.apply(null, [0].concat(Object.keys(porMes).map(function (d) { return porMes[d]; })));
+    s.elogMes = Math.max.apply(null, [0].concat(Object.keys(elogiosMes).map(function (d) { return elogiosMes[d]; })));
+
+    // dias seguidos (úteis): de sexta para segunda também conta como seguido
+    var dias = Object.keys(diasSet).sort(), run = 0, ant = "";
+    s.dias = dias.length;
+    dias.forEach(function (d) {
+        var dif = ant ? Math.round((dataDe(d) - dataDe(ant)) / 86400000) : 0;
+        run = (ant && (dif === 1 || d === proxUtil(ant))) ? run + 1 : 1;
+        if (run > s.seqDias) s.seqDias = run;
+        ant = d;
+    });
+
+    // meses (já encerrados) em que ficou em 1º lugar no ranking
+    Object.keys(porMes).forEach(function (m) {
+        if (m >= mesAtual()) return;
+        var topo = rankingMes(m)[0];
+        if (topo && topo.pts > 0 && topo.u.id === tecId) s.titulos++;
+    });
+
+    // semanas (já encerradas) em que ficou em 1º lugar no ranking
+    var semAtual = semanaIni(hoje()), semVistas = {};
+    fin.forEach(function (o) {
+        var ini = semanaIni(o.concluida);
+        if (ini >= semAtual || semVistas[ini]) return;
+        semVistas[ini] = true;
+        if (vencedoresSemana(ini).some(function (x) { return x.u.id === tecId; })) s.semanas++;
+    });
+
+    s.compras = compras.filter(function (x) { return x.por === tecId && (x.em || 0) >= ((empresa && empresa.zeroTs) || 0); }).length;
+    var u = userPorId(tecId);
+    s.perfil = u && u.foto && u.nasc ? 1 : 0;
+    return s;
+}
+
+/* Próximos objetivos: as conquistas abertas mais perto de sair */
+function proximosObjetivos(s, qtd) {
+    return CONQUISTAS.filter(function (c) { return !c.sec && c.v(s) < c.meta; })
+        .sort(function (a, b) {
+            return (b.v(s) / b.meta) - (a.v(s) / a.meta) || a.meta - b.meta;
+        }).slice(0, qtd);
+}
+
+function conqItemHTML(c, s, u) {
+    var v = Math.min(c.v(s), c.meta), ok = v >= c.meta;
+    var escondida = c.sec && !ok;
+    var t = CONQ_TIER[c.tier];
+    var quando = ok && u && u.conq && u.conq[c.id] ? "Conquistada em " + fmtData(u.conq[c.id]) : "Conquistada ✔";
+    return '<div class="conq-item' + (ok ? " ok" : "") + '" style="--cq:' + c.cor + '">' +
+        '<span class="conq-ic"><i class="fa-solid ' + (ok ? c.ic : escondida ? "fa-question" : "fa-lock") + '"></i></span>' +
+        '<div class="conq-tx"><b>' + (escondida ? "Conquista secreta" : esc(c.n)) +
+        ' <span class="conq-tier t' + c.tier + '">' + t.n + ' · +' + t.xp + ' XP</span></b>' +
+        '<small>' + (escondida ? "Continue trabalhando para descobrir" : esc(c.d)) + '</small>' +
+        (ok ? '<em>' + quando + '</em>'
+            : escondida ? ""
+            : '<div class="conq-barra"><i style="width:' + Math.round(v * 100 / c.meta) + '%"></i></div><em>' + v + ' de ' + c.meta + '</em>') +
+        '</div></div>';
+}
+
+function renderConqCard() {
+    var box = $("conqCard"), u = user();
+    if (!box) return;
+    if (!u || u.papel !== "tecnico") { box.style.display = "none"; return; }
+    box.style.display = "";
+    var s = statsTec(u.id), ganhas = conqGanhas(s);
+    var prox = proximosObjetivos(s, 3);
+    var mini = ganhas.slice().sort(function (a, b) { return b.tier - a.tier; }).slice(0, 12).map(function (c) {
+        return '<span class="conq-mini" style="--cq:' + c.cor + '" title="' + esc(c.n) + '"><i class="fa-solid ' + c.ic + '"></i></span>';
+    }).join("");
+    box.innerHTML = '<div class="form-titulo"><i class="fa-solid fa-medal"></i> Minhas conquistas <small class="conq-cont">' + ganhas.length + ' de ' + CONQUISTAS.length + '</small></div>' +
+        nivelHTML(s) +
+        (prox.length ? '<h4 class="conq-sub">🎯 Próximos objetivos</h4>' + prox.map(function (c) { return conqItemHTML(c, s, u); }).join("") : "") +
+        (mini ? '<h4 class="conq-sub">🏅 Suas melhores conquistas</h4><div class="conq-grade">' + mini + '</div>' : "") +
+        '<button class="btn-sec cheio" style="margin-top:12px" onclick="abrirConquistas(' + u.id + ')">Ver todas as conquistas</button>';
+}
+
+function abrirConquistas(id) {
+    var u = userPorId(id);
+    if (!u || u.papel !== "tecnico") return;
+    var s = statsTec(id), mes = pontosDoMes(id, mesAtual()), ganhas = conqGanhas(s);
+    var cats = CONQ_CATS.map(function (cat, idx) {
+        var lista = CONQUISTAS.filter(function (c) { return c.cat === cat.id; });
+        var feitas = lista.filter(function (c) { return c.v(s) >= c.meta; }).length;
+        return '<details class="conq-cat"' + (idx === 0 ? " open" : "") + '><summary><i class="fa-solid ' + cat.ic + '"></i> ' + cat.n +
+            '<small>' + feitas + '/' + lista.length + '</small></summary>' +
+            lista.map(function (c) { return conqItemHTML(c, s, u); }).join("") + '</details>';
+    }).join("");
+    var prox = proximosObjetivos(s, 3);
+    var h = '<div class="sheet-alca"></div><h2>🏅 ' + esc(u.nome) + '</h2>' +
+        '<div class="est-resumo"><div><b>' + mes.pts + '</b><small>pontos no mês</small></div>' +
+        '<div><b>' + s.total + '</b><small>OS finalizadas</small></div>' +
+        '<div><b>' + ganhas.length + '/' + CONQUISTAS.length + '</b><small>conquistas</small></div></div>' +
+        nivelHTML(s) +
+        (prox.length ? '<h4 class="conq-sub">🎯 Próximos objetivos</h4>' + prox.map(function (c) { return conqItemHTML(c, s, u); }).join("") : "") +
+        '<h4 class="conq-sub">📚 Todas as conquistas</h4>' + cats +
+        '<div class="sheet-acoes um" style="margin-top:6px"><button class="btn-sec" onclick="fecharOS()">Fechar</button></div>';
+    $("sheet").innerHTML = h;
+    $("overlay").classList.add("on");
+    $("sheet").classList.add("on");
+    document.body.classList.add("folha-aberta");
+}
+
+var conqFila = [];
+var conqSubiu = "";
+
+function conferirConquistas() {
+    var u = user();
+    if (!u || u.papel !== "tecnico") return;
+    if (viewAtual === "nova" || $("dlgConf") || $("conqModal") || $("sheet").classList.contains("on")) return;
+    var s = statsTec(u.id);
+    var ganhas = conqGanhas(s);
+    if (!u.conq) {   // primeira vez: registra o que já tinha, sem comemorar o passado
+        u.conq = {};
+        ganhas.forEach(function (c) { u.conq[c.id] = hoje(); });
+        u.conqV = CONQ_VERSAO;
+        salvar();
+        return;
+    }
+    if ((u.conqV || 0) < CONQ_VERSAO) {   // lista nova de conquistas: o que já era merecido entra sem festa
+        ganhas.forEach(function (c) { if (!u.conq[c.id]) u.conq[c.id] = hoje(); });
+        u.conqV = CONQ_VERSAO;
+        salvar();
+        renderTudo();
+        return;
+    }
+    var novas = ganhas.filter(function (c) { return !u.conq[c.id]; });
+    if (!novas.length) return;
+    var xpDepois = conqXP(s), xpGanho = 0;
+    novas.forEach(function (c) { xpGanho += CONQ_TIER[c.tier].xp; });
+    var antes = conqNivel(xpDepois - xpGanho), depois = conqNivel(xpDepois);
+    if (depois.i > antes.i) conqSubiu = depois.nome;
+    novas.forEach(function (c) { u.conq[c.id] = hoje(); conqFila.push(c); });
+    salvar();
+    renderTudo();
+    mostrarConquista();
+}
+
+function mostrarConquista() {
+    if ($("conqModal") || !conqFila.length) return;
+    var c = conqFila.shift(), t = CONQ_TIER[c.tier];
+    var ultima = !conqFila.length;
+    var subiu = ultima && conqSubiu ? '<p class="conq-subiu">🆙 Você subiu de nível: <b>' + esc(conqSubiu) + '</b></p>' : "";
+    if (ultima) conqSubiu = "";
+    var d = document.createElement("div");
+    d.id = "conqModal";
+    d.className = "dlg-fundo";
+    d.innerHTML = '<div class="dlg conq-dlg" style="--cq:' + c.cor + '">' + confeteHTML() +
+        '<div class="conq-selo"><i class="fa-solid ' + c.ic + '"></i></div>' +
+        '<small class="conq-nova">Nova conquista!</small><h3>' + esc(c.n) + '</h3><p>' + esc(c.d) + '</p>' +
+        '<span class="conq-tier t' + c.tier + '">' + t.n + ' · +' + t.xp + ' XP</span>' + subiu +
+        '<div class="dlg-bt um"><button type="button" class="dlg-sim">Legal! 🎉</button></div></div>';
+    document.body.appendChild(d);
+    d.querySelector(".dlg-sim").onclick = function () {
+        if (d.parentNode) d.parentNode.removeChild(d);
+        setTimeout(mostrarConquista, 250);
+    };
+    requestAnimationFrame(function () { d.classList.add("on"); });
+}
+
+/* ----- Elogio do líder ----- */
+var ELOGIOS = ["Ótimo trabalho! 👏", "Muito caprichoso 🔧", "Resolveu rápido ⚡", "Excelente documentação 📸", "Valeu pela ajuda 🤝"];
+
+function elogioHTML(o, adm) {
+    if (o.status !== "final") return "";
+    var t = userPorId(o.tecId);
+    if (!t || t.papel !== "tecnico") return "";
+    if (o.elogio) {
+        return '<div class="elogio"><div class="elogio-ic"><i class="fa-solid fa-star"></i></div>' +
+            '<div class="elogio-tx"><small>Elogio de ' + esc(nomeDe(o.elogio.de)) + '</small><b>' + esc(o.elogio.msg) + '</b></div>' +
+            (adm ? '<button class="elogio-ed" onclick="abrirElogio(' + o.id + ')" aria-label="Alterar elogio"><i class="fa-solid fa-pen"></i></button>' : "") + '</div>';
+    }
+    return adm ? '<button class="btn-sec cheio elogiar" onclick="abrirElogio(' + o.id + ')"><i class="fa-solid fa-star"></i> Elogiar ' + esc(t.nome) + '</button>' : "";
+}
+
+function abrirElogio(id) {
+    var o = buscar(id);
+    if (!o || !ehAdmin() || o.status !== "final") return;
+    var t = userPorId(o.tecId);
+    if (!t) return;
+    var h = '<div class="sheet-alca"></div><h2>⭐ Elogiar ' + esc(t.nome) + '</h2>' +
+        '<p class="dica" style="margin:0 0 10px">OS ' + num(o.id) + ' · ' + esc(o.titulo) + '. O técnico recebe um aviso e ganha pontos no ranking.</p>' +
+        '<div class="elogio-chips">' + ELOGIOS.map(function (e, i) { return '<button type="button" onclick="escolherElogio(' + i + ')">' + esc(e) + '</button>'; }).join("") + '</div>' +
+        '<label class="campo"><span>Mensagem</span><textarea id="elogioMsg" rows="3" maxlength="140" placeholder="Escreva um recado (opcional)">' + esc(o.elogio ? o.elogio.msg : "") + '</textarea></label>' +
+        '<div class="sheet-acoes"><button class="btn-sec" onclick="abrirOS(' + o.id + ')">Cancelar</button>' +
+        '<button class="btn-pri" style="margin-top:0" onclick="salvarElogio(' + o.id + ')"><i class="fa-solid fa-star"></i> Enviar</button></div>' +
+        (o.elogio ? '<div class="sheet-acoes um" style="margin-top:10px"><button class="btn-perigo" onclick="removerElogio(' + o.id + ')"><i class="fa-solid fa-trash"></i> Remover elogio</button></div>' : "");
+    $("sheet").innerHTML = h;
+}
+
+function escolherElogio(i) { $("elogioMsg").value = ELOGIOS[i]; }
+
+function salvarElogio(id) {
+    var o = buscar(id);
+    if (!o || !ehAdmin() || o.status !== "final") return;
+    var msg = $("elogioMsg").value.trim() || "Ótimo trabalho!";
+    var antes = o.elogio ? o.elogio.msg : null;
+    o.elogio = { de: sessao, msg: msg, em: Date.now() };
+    if (antes !== msg) {
+        avisos.push({ id: Date.now() + "_e" + o.id, para: o.tecId, osId: o.id, em: Date.now(), cor: "amar", ic: "fa-star",
+                      t: "⭐ " + nomeDe(sessao) + " elogiou você!", s: msg + " · OS " + num(o.id) });
+    }
+    salvar();
+    abrirOS(id);
+    renderTudo();
+    toast("Elogio enviado ⭐");
+}
+
+function removerElogio(id) {
+    var o = buscar(id);
+    if (!o || !ehAdmin() || !o.elogio) return;
+    pedirConfirmacao({
+        ic: "fa-star", titulo: "Remover elogio?", sim: "Sim, remover",
+        texto: 'O elogio da <b>OS ' + num(o.id) + '</b> será removido e o técnico perde os pontos dele.'
+    }, function () {
+        delete o.elogio;
+        salvar();
+        abrirOS(id);
+        renderTudo();
+        toast("Elogio removido");
+    });
+}
+
+function excluirOS(id) {
+    if (!ehAdmin()) return;
+    var o = buscar(id);
+    if (!o) return;
+    var rel = o.origem === "campo";
+    pedirConfirmacao({
+        ic: "fa-trash-can", titulo: rel ? "Excluir relatório?" : "Excluir ordem de serviço?",
+        texto: (rel ? 'O relatório' : 'A') + ' <b>OS ' + num(o.id) + '</b> · ' + esc(o.titulo) + ' será apagad' + (rel ? 'o' : 'a') + ', com fotos e materiais. Essa ação não pode ser desfeita.'
+    }, function () {
+        ordens = ordens.filter(function (x) { return x.id !== Number(id); });
+        salvar();
+        fecharOS();
+        renderTudo();
+        toast("OS excluída");
+    });
 }
 
 /* ==========================================
    ESTOQUE
    O saldo é sempre calculado: quantidade cadastrada
-   menos o que foi usado em OS FINALIZADAS. Por isso a baixa
-   é automática ao concluir e volta sozinha se a OS for excluída.
+   menos o que foi lançado como item de estoque em OS FINALIZADAS.
+   A peça entra na OS ao lançar, mas só sai do saldo quando a OS é
+   finalizada; se a OS for excluída, a peça volta sozinha.
 ========================================== */
 function arred(n) { return Math.round(n * 100) / 100; }
 
@@ -1926,7 +2977,7 @@ function estItem(id) {
 function consumoEstoque(estId, ignorarOS) {
     var t = 0;
     ordens.forEach(function (o) {
-        if (o.id === ignorarOS) return;
+        if (o.id === ignorarOS || o.status !== "final") return;   // só a OS finalizada dá baixa
         (o.itens || []).forEach(function (i) { if (i.estId === estId) t += i.qtd; });
     });
     return arred(t);
@@ -2224,12 +3275,11 @@ function locCurto(l) {
 }
 
 function linhaLocal(i, l) {
-    return '<div class="local-linha" data-i="' + i + '">' +
+    return '<div class="local-linha" data-i="' + i + '" data-lado="' + esc(l.lado || "") + '">' +
         '<span class="local-n">' + (i + 1) + '</span>' +
         '<select class="ll-rua" aria-label="Rua">' + optsRua(l.rua) + '</select>' +
-        '<select class="ll-lado" aria-label="Lado">' + optsLado(l.lado) + '</select>' +
         '<select class="ll-nivel" aria-label="Nível">' + optsNivel(l.nivel) + '</select>' +
-        '<input type="text" class="ll-caixa" maxlength="12" placeholder="Nº" value="' + esc(l.caixa || "") + '" aria-label="Caixa ou gaveta">' +
+        '<input type="text" class="ll-caixa" maxlength="12" placeholder="Nº da caixa" value="' + esc(l.caixa || "") + '" aria-label="Caixa ou gaveta">' +
         '<input type="text" class="ll-qtd" inputmode="decimal" maxlength="8" placeholder="0" value="' + esc(String(l.qtd == null ? "" : l.qtd)) + '" aria-label="Quantidade neste local">' +
         '<button type="button" class="local-x" onclick="rmLocalLinha(this)" aria-label="Remover local">✕</button>' +
     '</div>';
@@ -2243,12 +3293,12 @@ function lerLocais() {
     box.querySelectorAll(".local-linha").forEach(function (ln) {
         var l = {
             rua: ln.querySelector(".ll-rua").value,
-            lado: ln.querySelector(".ll-lado").value,
+            lado: ln.getAttribute("data-lado") || "",   // campo antigo: preservado, sem edição
             nivel: ln.querySelector(".ll-nivel").value,
             caixa: ln.querySelector(".ll-caixa").value.trim(),
             qtd: arred(lerNumero(ln.querySelector(".ll-qtd").value) || 0)
         };
-        if (l.rua || l.lado || l.nivel || l.caixa || l.qtd) out.push(l);
+        if (l.rua || l.nivel || l.caixa || l.qtd) out.push(l);
     });
     return out;
 }
@@ -2374,18 +3424,15 @@ function formEstoque(id, rascunho) {
                 '<label class="campo"><span>Unidade</span><select id="edEstUn" onchange="atualizarTotalPeca()">' + optsUnidade(un) + '</select></label>' +
                 '<label class="campo"><span>Estoque mínimo</span><input type="text" id="edEstMin" inputmode="numeric" maxlength="8" value="' + esc(rascunho ? rascunho.min : (e && e.min ? String(e.min) : "")) + '" placeholder="Ex: 5"></label>' +
             '</div>' +
-            '<div class="linha2">' +
-                '<label class="campo"><span>Estoque máximo</span><input type="text" id="edEstMax" inputmode="numeric" maxlength="8" value="' + esc(rascunho ? rascunho.max : (e && e.max ? String(e.max) : "")) + '" placeholder="Ex: 20"></label>' +
-            '<label class="campo"><span>Fornecedor padrão <small class="opc">(opcional)</small></span><input type="text" id="edEstForn" list="dlForn" maxlength="40" value="' + esc(rascunho ? rascunho.forn : (e ? e.forn || "" : "")) + '" placeholder="Ex: Rolamentos Brasil" autocomplete="off"></label>' +
-            '</div>' +
+            '<label class="campo"><span>Estoque máximo</span><input type="text" id="edEstMax" inputmode="numeric" maxlength="8" value="' + esc(rascunho ? rascunho.max : (e && e.max ? String(e.max) : "")) + '" placeholder="Ex: 20"></label>' +
             '<p class="dica" style="margin:0">O mínimo avisa quando a peça está acabando. O máximo define quanto comprar na reposição sugerida.</p>' +
         '</div>';
 
     // Locais de guarda
     h += '<div class="cad-sec">' +
-            '<div class="cad-sec-t"><span class="cad-ic"><i class="fa-solid fa-location-dot"></i></span>Locais de guarda</div>' +
+            '<div class="cad-sec-t"><span class="cad-ic"><i class="fa-solid fa-location-dot"></i></span>Locais de armazenamento</div>' +
             '<p class="dica" style="margin:0 0 10px">Informe onde a peça está e a quantidade em cada lugar. Se estiver em mais de um lugar, toque em <b>Adicionar local</b>.</p>' +
-            '<div class="local-cab"><span></span><span>Rua</span><span>Lado</span><span>Nível</span><span>Nº</span><span>Qtd</span><span></span></div>' +
+            '<div class="local-cab"><span></span><span>Rua</span><span>Nível</span><span>Nº da caixa</span><span>Qtd</span><span></span></div>' +
             '<div id="estLocais"></div>' +
             '<button type="button" class="add-local" onclick="addLocal()"><i class="fa-solid fa-plus"></i> Adicionar local</button>' +
             '<div class="cad-total"><span>Quantidade total no estoque</span><b id="estTotalPeca">0</b></div>' +
@@ -2526,7 +3573,6 @@ function renderPeca() {
     h += '<div class="peca-sec"><div class="peca-sec-t"><i class="fa-solid fa-chart-line"></i> Gestão</div>' +
         '<div class="pro-grade">' +
             cel("Estoque máximo", e.max ? fmtQtd(e.max) : "—") +
-            cel("Fornecedor padrão", e.forn ? esc(e.forn) : "—") +
             cel("Consumo (90 dias)", fmtQtd(cons) + " " + esc(e.un)) +
             cel("Dura cerca de", cob == null ? "—" : cob + (cob === 1 ? " dia" : " dias")) +
             cel("Já pedido, a chegar", pend ? fmtQtd(pend) + " " + esc(e.un) : "—") +
@@ -2545,7 +3591,6 @@ function renderPeca() {
             return '<div class="loc-card">' +
                 '<div class="loc-grade">' +
                     '<div class="loc-campo destaque"><small>Rua</small><b>' + (l.rua ? esc(l.rua) : "—") + '</b></div>' +
-                    '<div class="loc-campo"><small>Lado</small><b>' + l.lado + '</b></div>' +
                     '<div class="loc-campo"><small>Nível</small><b>' + esc(String(l.nivel)) + '</b></div>' +
                     '<div class="loc-campo"><small>Caixa / gaveta</small><b>' + esc(String(l.caixa)) + '</b></div>' +
                 '</div>' +
@@ -2991,7 +4036,6 @@ function abrirCategorias() {
         un: $("edEstUn") ? $("edEstUn").value : "un",
         min: $("edEstMin") ? $("edEstMin").value : "",
         max: $("edEstMax") ? $("edEstMax").value : "",
-        forn: $("edEstForn") ? $("edEstForn").value : "",
         cat: $("edEstCat") ? $("edEstCat").value : "",
         locais: $("estLocais") ? lerLocais() : []
     };
@@ -3069,11 +4113,17 @@ function removerCategoria(i) {
     if (!nome) return;
     var n = estoque.filter(function (e) { return e.cat === nome; }).length;
     if (n) { toast("'" + nome + "' está em uso por " + n + (n === 1 ? " peça" : " peças")); return; }
-    if (!confirm("Remover a categoria '" + nome + "'?")) return;
-    CATEGORIAS.splice(i, 1);
-    salvar();
-    toast("Categoria removida");
-    abrirCategorias();
+    pedirConfirmacao({
+        ic: "fa-tag", titulo: "Remover categoria?", sim: "Sim, remover",
+        texto: 'A categoria <b>' + esc(nome) + '</b> será removida da lista.'
+    }, function () {
+        var j = CATEGORIAS.indexOf(nome);
+        if (j === -1) return;
+        CATEGORIAS.splice(j, 1);
+        salvar();
+        toast("Categoria removida");
+        abrirCategorias();
+    });
 }
 
 function salvarEstoque(id) {
@@ -3106,7 +4156,7 @@ function salvarEstoque(id) {
         un: $("edEstUn").value,
         min: arred(min),
         max: arred(max),
-        forn: $("edEstForn").value.trim(),
+        forn: e && e.forn ? e.forn : "",   // campo antigo: mantém o que já existia
         locais: locais
     };
     // o primeiro local também alimenta os campos antigos (lista, relatórios e OS)
@@ -3142,12 +4192,16 @@ function salvarEstoque(id) {
 function excluirEstoque(id) {
     var e = estItem(id);
     if (!e) return;
-    if (!confirm("Excluir '" + e.nome + "' do estoque? As OS já feitas continuam com o nome do item.")) return;
-    estoque = estoque.filter(function (x) { return x.id !== e.id; });
-    salvar();
-    fecharOS();
-    renderTudo();
-    toast("Item excluído do estoque");
+    pedirConfirmacao({
+        ic: "fa-box-open", titulo: "Excluir do estoque?",
+        texto: '<b>' + esc(e.nome) + '</b> será excluído do estoque. As OS já feitas continuam com o nome do item. Essa ação não pode ser desfeita.'
+    }, function () {
+        estoque = estoque.filter(function (x) { return x.id !== e.id; });
+        salvar();
+        fecharOS();
+        renderTudo();
+        toast("Item excluído do estoque");
+    });
 }
 
 /* ==========================================
@@ -3263,6 +4317,9 @@ function compraLinha(c) {
         h += '<div class="comp-visto"><i class="fa-solid fa-eye"></i>Visualizada por ' + esc(nomeDe(c.vistaPor)) + ' · ' + fmtTs(c.vistaEm) + '</div>';
     } else if (c.status === "solicitada") {
         h += '<div class="comp-visto nao"><i class="fa-regular fa-eye-slash"></i>Ainda não visualizada</div>';
+    } else if (c.status === "comprada") {
+        h += '<div class="comp-visto"><i class="fa-solid fa-cart-shopping"></i>Pedido feito' +
+             (c.compradoEm ? ' em ' + fmtData(c.compradoEm) : '') + '</div>';
     }
 
     if (c.fornecedor && compraAtiva(c)) {
@@ -3360,17 +4417,27 @@ function salvarCompra() {
     if (!ok) return;
 
     var dup = e ? compraAberta(e.id) : compras.filter(function (c) { return !c.estId && compraAtiva(c) && c.nome.toLowerCase() === nome.toLowerCase(); })[0];
-    if (dup && !confirm("Já existe uma solicitação em aberto para '" + nome + "'. Criar outra mesmo assim?")) return;
-
-    compras.push({
+    var dados = {
         id: proximoId(compras), estId: e ? e.id : null, nome: nome, un: un, qtd: arred(qtd),
         obs: $("cpObs").value.trim(), prior: $("cpPrior").value, urgente: $("cpPrior").value !== "normal",
         por: sessao, em: Date.now(), status: "solicitada", receb: []
-    });
-    salvar();
-    fecharOS();
-    renderTudo();
-    toast("Solicitação enviada para a compradora ✔");
+    };
+    function enviar() {
+        dados.id = proximoId(compras);
+        compras.push(dados);
+        salvar();
+        fecharOS();
+        renderTudo();
+        toast("Solicitação enviada para a compradora ✔");
+    }
+    if (dup) {
+        pedirConfirmacao({
+            ic: "fa-copy", tipo: "azul", titulo: "Já existe um pedido aberto", sim: "Sim, criar outra", nao: "Cancelar",
+            texto: 'Já existe uma solicitação em aberto para <b>' + esc(nome) + '</b>. Criar outra mesmo assim?'
+        }, enviar);
+        return;
+    }
+    enviar();
 }
 
 /* ----- Detalhe / pedido ----- */
@@ -3609,6 +4676,7 @@ function resumoCompras() {
     var ab = compras.filter(compraAtiva);
     return {
         abertas: ab.length,
+        aguardando: ab.filter(function (c) { return c.status === "solicitada" || c.status === "visualizada"; }).length,
         semVer: ab.filter(function (c) { return c.status === "solicitada"; }).length,
         caminho: ab.filter(function (c) { return c.status === "comprada" || c.status === "parcial"; }).length,
         atrasadas: ab.filter(compraAtrasada).length
@@ -3705,14 +4773,16 @@ function histPedidosHtml(c) {
 /* ----- Movimentações completas de uma peça (manuais + saídas por OS) ----- */
 function movimentosDe(e) {
     var l = (e.mov || []).map(function (m) {
+        // saída e ajuste já são gravados com o sinal certo
         var q = m.t === "entrada" ? m.qtd : (m.t === "ajuste" ? m.qtd : -m.qtd);
         var rot = m.t === "entrada" ? "Entrada" : m.t === "saida" ? "Saída" : "Ajuste de contagem";
         return {
-            data: m.em, tipo: m.t, qtd: q, por: nomeDe(m.por), origem: m.obs || "",
+            data: m.em, tipo: m.t, qtd: arred(q), por: nomeDe(m.por), origem: m.obs || "",
             tx: rot + (m.obs ? " · " + m.obs : "") + " · " + nomeDe(m.por)
         };
     });
     ordens.forEach(function (o) {
+        if (o.status !== "final") return;
         var q = 0;
         (o.itens || []).forEach(function (i) { if (i.estId === e.id) q += i.qtd; });
         if (q) l.push({
@@ -3937,15 +5007,15 @@ function abrirRelEstoque() {
     });
     var top = lista.filter(function (x) { return x.c > 0; })
         .sort(function (a, b) { return b.c - a.c; }).slice(0, 5);
-    function kpi(rot, val, alerta) {
+    function kpiCard(rot, val, alerta) {
         return '<div class="' + (alerta ? "alerta" : "") + '"><small>' + rot + '</small><b>' + val + '</b></div>';
     }
     var h = '<div class="sheet-alca"></div><h2>Relatório de estoque</h2>' +
         '<div class="pro-kpis">' +
-            kpi("Compras em aberto", compras.filter(compraAtiva).length) +
-            kpi("Abaixo do mínimo", estoque.filter(estBaixo).length, estoque.filter(estBaixo).length > 0) +
-            kpi("Estoque zerado", estoque.filter(estSaldoZero).length, estoque.filter(estSaldoZero).length > 0) +
-            kpi("Sem saída há 180 dias", parados) +
+            kpiCard("Compras em aberto", compras.filter(compraAtiva).length) +
+            kpiCard("Abaixo do mínimo", estoque.filter(estBaixo).length, estoque.filter(estBaixo).length > 0) +
+            kpiCard("Estoque zerado", estoque.filter(estSaldoZero).length, estoque.filter(estSaldoZero).length > 0) +
+            kpiCard("Sem saída há 180 dias", parados) +
         '</div>';
     h += '<h4 style="margin-top:16px">Mais consumidos (90 dias)</h4>' + (top.length
         ? '<div class="est-hist">' + top.map(function (x) {
@@ -4325,7 +5395,7 @@ function relTabelaOS(lista, tipo) {
 }
 
 function baixaTxt(o, i) {
-    if (i.estId) return "✔ Automática (ao lançar)";
+    if (i.estId) return o.status === "final" ? "✔ Automática (ao finalizar)" : "Baixa ao finalizar a OS";
     return o.baixa ? "✔ " + fmtData(o.baixaEm) : "Pendente";
 }
 
@@ -4432,10 +5502,12 @@ function movimentosEstoque(lista, de, ate) {
     var mv = [];
     lista.forEach(function (e) {
         (e.mov || []).forEach(function (m) {
-            mv.push({ data: m.em, e: e, qtd: m.t === "entrada" ? m.qtd : -m.qtd,
-                      tx: m.obs || (m.t === "entrada" ? "Entrada manual" : "Saída manual"), por: nomeDe(m.por) });
+            // "saida" e "ajuste" já vêm com o sinal certo; o ajuste de contagem não pode ser invertido
+            var q = m.t === "entrada" ? m.qtd : (m.t === "ajuste" ? m.qtd : -m.qtd);
+            mv.push({ data: m.em, e: e, qtd: arred(q), tx: motivoMov(m), por: nomeDe(m.por) });
         });
         ordens.forEach(function (o) {
+            if (o.status !== "final") return;
             var q = 0;
             (o.itens || []).forEach(function (i) { if (i.estId === e.id) q += i.qtd; });
             if (q) mv.push({ data: o.concluida || o.criada || "", e: e, qtd: -arred(q), tx: "OS " + num(o.id) + " · " + o.titulo, por: nomeDe(o.tecId) });
@@ -4447,6 +5519,14 @@ function movimentosEstoque(lista, de, ate) {
         if (ate && m.data > ate) return false;
         return true;
     }).sort(function (a, b) { return a.data === b.data ? a.e.nome.localeCompare(b.e.nome, "pt-BR") : (a.data < b.data ? -1 : 1); });
+}
+
+// Texto do motivo de um movimento manual (evita "undefined" na tela)
+function motivoMov(m) {
+    if (m.obs) return m.obs;
+    if (m.t === "entrada") return "Entrada manual";
+    if (m.t === "saida") return "Saída manual";
+    return "Ajuste de contagem";
 }
 
 function gerarRelEstoque(tipo) {

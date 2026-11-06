@@ -82,8 +82,10 @@
 
 <!-- ============ INÍCIO ============ -->
 <section class="view" id="v-inicio">
+    <div id="festaBox"></div>
     <div class="resumo" id="resumo"></div>
     <div class="cards" id="cards"></div>
+    <div id="metaBox"></div>
 
     <div class="bloco" id="alertaBanner" style="padding-bottom:0"></div>
     <div class="bloco" id="blocoDestaque"></div>
@@ -115,13 +117,21 @@
         <input type="hidden" id="fId">
         <input type="hidden" id="fPrior" value="media">
 
+        <!-- Somente técnico: registrar serviço feito OU designar a outro técnico -->
+        <div class="form-card so-toggle" id="cModo">
+            <div class="seg dois" id="segModo">
+                <button type="button" class="on" data-m="reg" onclick="setModoDesig(false)"><i class="fa-solid fa-clipboard-check"></i> Registrar serviço feito</button>
+                <button type="button" data-m="des" onclick="setModoDesig(true)"><i class="fa-solid fa-user-group"></i> Designar a outro técnico</button>
+            </div>
+        </div>
+
         <div class="form-card">
             <div class="form-titulo"><i class="fa-solid fa-gear"></i> Identificação</div>
 
             <label class="campo" id="cTitulo">
-                <span>Equipamento / Título *</span>
-                <input type="text" id="fTitulo" maxlength="80" placeholder="Ex: Motor da Esteira 01">
-                <em class="erro">Informe o equipamento ou título.</em>
+                <span>Serviço solicitado *</span>
+                <input type="text" id="fTitulo" maxlength="80" placeholder="Ex: Trocar rolamento do motor da esteira 01">
+                <em class="erro">Informe o serviço solicitado.</em>
             </label>
 
             <div class="linha2">
@@ -221,6 +231,7 @@
                 <span><i class="pt verm"></i>Atrasada</span>
                 <span><i class="pt verde"></i>Finalizada</span>
                 <span><i class="pt roxo"></i>Evento</span>
+                <span><i class="pt rosa"></i>Aniversário</span>
             </div>
             <small id="calResumo"></small>
         </div>
@@ -245,6 +256,9 @@
     </div>
 
     <div class="perfil-stats" id="perfilStats"></div>
+
+    <div class="form-card" id="rankCard" style="display:none"></div>
+    <div class="form-card" id="conqCard" style="display:none"></div>
 
     <div class="form-card">
         <button class="btn-pri cheio" style="margin-top:0" onclick="abrirEditor(sessao)"><i class="fa-solid fa-user-pen"></i> Editar meu perfil</button>
@@ -379,6 +393,13 @@
         <div class="form-titulo"><i class="fa-solid fa-database"></i> Dados</div>
         <button class="btn-sec cheio" onclick="exportar()"><i class="fa-solid fa-download"></i> Exportar backup (.json)</button>
         <button class="btn-perigo cheio" onclick="limparTudo()"><i class="fa-solid fa-trash"></i> Apagar todas as OS</button>
+    </div>
+
+    <div class="form-card so-admin">
+        <div class="form-titulo"><i class="fa-solid fa-medal"></i> Conquistas e ranking</div>
+        <p class="dica" style="margin:0 0 4px">Zera conquistas, nível, pontos e os rankings semanal e mensal de todos os técnicos, para recomeçarem do zero. As OS não são apagadas.</p>
+        <p class="dica" id="zeroInfo" style="margin:0 0 12px"></p>
+        <button class="btn-perigo cheio" onclick="zerarConquistas()"><i class="fa-solid fa-rotate-left"></i> Zerar conquistas e ranking</button>
     </div>
 
 </section>

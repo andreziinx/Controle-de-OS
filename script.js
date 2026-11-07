@@ -539,33 +539,39 @@ function ir(nome) {
    algo para o usuário saber (enviando, sem internet ou erro).
 ========================================== */
 function atualizarSinc() {
-    var b = $("sinc"), i = $("sincIco");
-    if (!b || !i) return;
+    var b = $("sinc");
+    if (!b) return;
     var semServidor = (typeof sb === "undefined") || !sb;
     var ocupado = typeof sbOcupado !== "undefined" && sbOcupado;
     var online = typeof sbOnline !== "undefined" && sbOnline;
 
     if (!user() || semServidor) {
-        b.classList.remove("on", "offline", "enviando");
+        b.classList.remove("on", "offline", "online", "enviando");
         return;
     }
 
     if (ocupado) {
         b.classList.add("on", "enviando");
-        b.classList.remove("offline");
-        i.className = "fa-solid fa-arrows-rotate fa-rotate";
+        b.classList.remove("offline", "online");
         b.title = "Enviando dados para o servidor...";
         return;
     }
     if (!online) {
         b.classList.add("on", "offline");
-        b.classList.remove("enviando");
-        i.className = "fa-solid fa-cloud-exclamation";
+        b.classList.remove("enviando", "online");
         b.title = "Sem conexão com o servidor. Tudo continua salvo neste aparelho.";
         return;
     }
-    b.classList.remove("on", "offline", "enviando");
-    i.className = "fa-solid fa-cloud";
+    // Tudo certo: a nuvem verde confirma a sincronização e apaga em 4 segundos
+    b.classList.add("on", "online");
+    b.classList.remove("offline", "enviando");
+    b.title = "Sincronizado com o servidor";
+    clearTimeout(atualizarSinc.h);
+    atualizarSinc.h = setTimeout(function () {
+        if (!b.classList.contains("offline") && !b.classList.contains("enviando")) {
+            b.classList.remove("on", "online");
+        }
+    }, 4000);
 }
 
 // Tela explicando a conexão (aberta ao tocar no ícone da nuvem)

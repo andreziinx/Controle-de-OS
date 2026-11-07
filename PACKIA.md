@@ -65,7 +65,13 @@ Roda como site/PWA instalável e sincroniza pelo Supabase.
 - Estado da conexão visível no topo (`#sinc` → `atualizarSinc()`); a tela
   "Conexão com o banco" (`abrirDadosConexao`) tem o botão **Testar agora**
   (`testarConexao`), que lê uma linha de cada tabela.
-- Ao publicar mudanças em `supabase.js`, subir `VERSAO` no `sw.js` (atual: v8),
+- O ícone de conexão é **SVG dentro do `index.html`**, não Font Awesome: se a
+  biblioteca de ícones atrasar, o desenho não quebra (antes aparecia uma nuvem
+  preta num quadrado branco). Estados: escondido (sincronizado), verde por 4 s
+  após sincronizar, girando (enviando), vermelho (sem servidor).
+- `.topo-linha > .sino` e `> .sinc` precisam de `flex:0 0 auto` e 42x42: o
+  `.topo-textos` tem `flex:1` e espremia os botões.
+- Ao publicar mudanças em `supabase.js`, subir `VERSAO` no `sw.js` (atual: v9),
   senão o app instalado continua com o arquivo antigo.
 
 ## Estado do banco (conferido)

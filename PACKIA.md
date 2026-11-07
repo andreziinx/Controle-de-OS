@@ -45,11 +45,42 @@ Roda como site/PWA instalável e sincroniza pelo Supabase.
 - Aviso "Nova OS para você" não depende mais do prazo (antes, uma OS designada para
   daqui a mais de 2 dias não avisava o técnico).
 
+## Regras da conexão com o banco (supabase.js)
+
+- **Nada é enviado antes de uma leitura bem-sucedida** (`sbOnline`). Sem isso, um
+  aparelho sem internet podia subir dados velhos por cima dos de outro aparelho.
+- Leitura paginada de 1000 em 1000 (`sbLerTabela`): o Supabase corta a resposta em
+  1000 linhas; sem paginar, dados sumiam quando a lista crescia.
+- `sbLerTabela` e todas as listas vindas do servidor passam por `sbLista()`
+  (garante array), e `sbMapa` ignora registro sem `id`.
+- Falha de rede é silenciosa (só liga o ícone de nuvem vermelha) e tenta de novo;
+  falha de permissão/schema mostra o motivo em `sbMotivoErro`.
+- Cada lote enviado é marcado em `sbSnap` logo após o `upsert`; se o envio falhar no
+  meio, o que já subiu não é reenviado.
+- Erro de bucket de fotos é avisado **uma vez** (`sbAvisouBucket`) e não impede a
+  sincronização do resto.
+- `sbAtualizar` não sobrescreve a tela quando o servidor devolve equipe vazia
+  (`if (!usuarios.length) return`).
+- Evento `online` do navegador dispara `sbAtualizar()` na hora.
+- Estado da conexão visível no topo (`#sinc` → `atualizarSinc()`); a tela
+  "Conexão com o banco" (`abrirDadosConexao`) tem o botão **Testar agora**
+  (`testarConexao`), que lê uma linha de cada tabela.
+- Ao publicar mudanças em `supabase.js`, subir `VERSAO` no `sw.js` (atual: v8),
+  senão o app instalado continua com o arquivo antigo.
+
+## Estado do banco (conferido)
+
+- Projeto: `llmwmqmkqhwjvilkpseq`. Tabelas `ordens`, `usuarios`, `eventos`,
+  `avisos`, `estoque`, `compras` e `config` existem e respondem.
+- **O bucket `fotos` NÃO existe**: as fotos ficam em base64 neste aparelho até o
+  `supabase.sql` ser rodado no SQL Editor (a parte do Storage cria o bucket).
+- Avisos que apontavam para OS apagadas foram removidos do banco.
+
 ## Observações conhecidas
 
 - A pasta `icons/` não existe ainda; o manifest e o service worker apontam para
   `icons/icon-192.png`, `icon-512.png`, `icon-maskable-512.png`,
   `apple-touch-icon.png` e `favicon-32.png`. Sem esses arquivos, o app instala
   com ícone genérico (o app funciona normalmente).
-- No Supabase, as tabelas `estoque` e `compras` ainda não foram criadas: rode
-  `supabase.sql` no SQL Editor para que apareçam.
+- `supabase.backup-*.js` é a cópia do `supabase.js` anterior à revisão da conexão.
+  Pode apagar quando estiver tudo validado em produção.

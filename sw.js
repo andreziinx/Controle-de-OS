@@ -3,7 +3,7 @@
    Não precisa mexer: ao publicar uma versão nova,
    o app se atualiza sozinho quando o aparelho tem internet.
 ========================================== */
-var VERSAO = "manutencao-v7";
+var VERSAO = "manutencao-v8";
 var CACHE_APP = VERSAO + "-app";
 var CACHE_LIVRE = VERSAO + "-externo";   // ícones, fontes e bibliotecas de CDN
 var CACHE_FOTOS = VERSAO + "-fotos";     // fotos do Supabase Storage
@@ -16,6 +16,7 @@ var ARQUIVOS = [
     "script.js",
     "supabase.js",
     "pwa.js",
+    "sw.js",
     "manifest.webmanifest",
     "icons/icon-192.png",
     "icons/icon-512.png",

@@ -520,6 +520,7 @@ function ir(nome) {
 
     $("topoAvatar").style.display = compacto ? "none" : "flex";
     $("sino").style.display = compacto ? "none" : "block";
+    if ($("sinc")) $("sinc").style.display = compacto ? "none" : "";
     setAvatar($("topoAvatar"), user());
 
     // Se o desenho de uma tela falhar, a navegação continua funcionando
@@ -530,6 +531,120 @@ function ir(nome) {
         toast("Não foi possível atualizar a tela. Feche e abra o app.");
     }
     window.scrollTo(0, 0);
+}
+
+/* ==========================================
+   ESTADO DA CONEXÃO COM O BANCO
+   Fica escondido quando está tudo sincronizado; só aparece quando há
+   algo para o usuário saber (enviando, sem internet ou erro).
+========================================== */
+function atualizarSinc() {
+    var b = $("sinc"), i = $("sincIco");
+    if (!b || !i) return;
+    var semServidor = (typeof sb === "undefined") || !sb;
+    var ocupado = typeof sbOcupado !== "undefined" && sbOcupado;
+    var online = typeof sbOnline !== "undefined" && sbOnline;
+
+    if (!user() || semServidor) {
+        b.classList.remove("on", "offline", "enviando");
+        return;
+    }
+
+    if (ocupado) {
+        b.classList.add("on", "enviando");
+        b.classList.remove("offline");
+        i.className = "fa-solid fa-arrows-rotate fa-rotate";
+        b.title = "Enviando dados para o servidor...";
+        return;
+    }
+    if (!online) {
+        b.classList.add("on", "offline");
+        b.classList.remove("enviando");
+        i.className = "fa-solid fa-cloud-exclamation";
+        b.title = "Sem conexão com o servidor. Tudo continua salvo neste aparelho.";
+        return;
+    }
+    b.classList.remove("on", "offline", "enviando");
+    i.className = "fa-solid fa-cloud";
+}
+
+// Tela explicando a conexão (aberta ao tocar no ícone da nuvem)
+function abrirDadosConexao() {
+    var semServidor = (typeof sb === "undefined") || !sb;
+    var online = typeof sbOnline !== "undefined" && sbOnline;
+    var estOk = typeof sbEstOk === "undefined" || sbEstOk;
+    var comOk = typeof sbComOk === "undefined" || sbComOk;
+    var ultimo = (typeof sbUltimoEnvio === "number" && sbUltimoEnvio) ? fmtTs(sbUltimoEnvio) : "—";
+
+    function linha(ok, titulo, detalhe) {
+        return '<div class="conf-linha ' + (ok ? "ok" : "ruim") + '">' +
+            '<i class="fa-solid ' + (ok ? "fa-circle-check" : "fa-circle-exclamation") + '"></i>' +
+            '<div><b>' + titulo + '</b><small>' + detalhe + '</small></div></div>';
+    }
+
+    var h = '<div class="sheet-alca"></div><h2>Conexão com o banco</h2>' +
+        linha(!semServidor, semServidor ? "Biblioteca do Supabase não carregou" : "Conexão configurada",
+              semServidor ? "Abra o app com internet pelo menos uma vez." : "Endereço e chave do projeto estão preenchidos.") +
+        linha(online, online ? "Servidor alcançável" : "Servidor não alcançado",
+              online ? "Os dados deste aparelho estão sincronizados." : "Os dados continuam salvos aqui e serão enviados quando a internet voltar.") +
+        linha(estOk, estOk ? "Tabela de estoque" : "Tabela de estoque ausente",
+              estOk ? "Disponível no servidor." : "Rode o supabase.sql no Supabase para sincronizar o estoque.") +
+        linha(comOk, comOk ? "Tabela de compras" : "Tabela de compras ausente",
+              comOk ? "Disponível no servidor." : "Rode o supabase.sql no Supabase para sincronizar as compras.") +
+        '<p class="dica" style="margin:10px 0 0">Último envio concluído: <b>' + esc(ultimo) + '</b></p>' +
+        '<h4>Se algo não sincronizar</h4>' +
+        '<p class="dica" style="margin:0 0 10px">1. Confira a internet do aparelho.<br>' +
+        '2. No Supabase, abra o SQL Editor e rode o conteúdo de <b>supabase.sql</b> (cria tabelas, permissões e o espaço de fotos).<br>' +
+        '3. As fotos precisam do bucket <b>fotos</b>; sem ele, o resto continua funcionando.</p>' +
+        '<div class="sheet-acoes"><button class="btn-sec" onclick="testarConexao()"><i class="fa-solid fa-plug-circle-check"></i> Testar agora</button>' +
+        '<button class="btn-pri" style="margin-top:0" onclick="fecharOS()">Fechar</button></div>';
+
+    $("sheet").innerHTML = h;
+    $("overlay").classList.add("on");
+    $("sheet").classList.add("on");
+    document.body.classList.add("folha-aberta");
+}
+
+// Teste de verdade: lê uma linha de cada tabela e diz o que respondeu
+function testarConexao() {
+    if (typeof sb === "undefined" || !sb) { toast("Supabase não carregou: verifique a internet"); return; }
+    toast("Testando a conexão...");
+    var tabelas = ["ordens", "usuarios", "eventos", "avisos", "estoque", "compras", "config"];
+    var resultados = [];
+    var fila = tabelas.slice();
+
+    function proxima() {
+        if (!fila.length) { fim(); return; }
+        var t = fila.shift();
+        sb.from(t).select("*").limit(1).then(function (r) {
+            resultados.push({ t: t, ok: !r.error, msg: r.error ? sbMotivoErro(r.error) : "ok" });
+            proxima();
+        }).catch(function (e) {
+            resultados.push({ t: t, ok: false, msg: sbMotivoErro(e) });
+            proxima();
+        });
+    }
+
+    function fim() {
+        var ruins = resultados.filter(function (x) { return !x.ok; });
+        var h = '<div class="sheet-alca"></div><h2>Resultado do teste</h2>';
+        h += resultados.map(function (x) {
+            return '<div class="conf-linha ' + (x.ok ? "ok" : "ruim") + '">' +
+                '<i class="fa-solid ' + (x.ok ? "fa-circle-check" : "fa-circle-exclamation") + '"></i>' +
+                '<div><b>' + x.t + '</b><small>' + esc(x.ok ? "Respondeu normalmente." : x.msg) + '</small></div></div>';
+        }).join("");
+        h += '<p class="dica" style="margin:10px 0 0">' + (ruins.length
+            ? "Revise os itens acima no Supabase. O app continua funcionando com os dados deste aparelho."
+            : "Tudo certo: o banco respondeu em todas as tabelas.") + '</p>' +
+            '<div class="sheet-acoes um"><button class="btn-pri" style="margin-top:0" onclick="fecharOS()">Fechar</button></div>';
+        $("sheet").innerHTML = h;
+        $("overlay").classList.add("on");
+        $("sheet").classList.add("on");
+        document.body.classList.add("folha-aberta");
+        if (typeof sbAtualizar === "function") setTimeout(sbAtualizar, 200);
+    }
+
+    proxima();
 }
 
 function saudacao() {
@@ -546,6 +661,7 @@ function renderTudo() {
     if (viewAtual === "p-peca")     renderPeca();
     if (viewAtual.indexOf("p-") === 0) renderSub();
     atualizarSino();
+    atualizarSinc();
     setTimeout(conferirConquistas, 500);
 }
 
@@ -1329,7 +1445,7 @@ function excluirEvento(id) {
    PERFIL
 ========================================== */
 function renderMenuPerfil() {
-    var eq = usuarios.filter(function (u) { return u.papel !== "admin"; }).length;
+    var eq = usuarios.filter(function (u) { return u.id !== sessao; }).length;
     $("mcEquipe").textContent = eq + (eq === 1 ? " pessoa na equipe" : " pessoas na equipe");
     $("mcEmpresa").textContent = empresa.nome || "Logo e nome da empresa";
     $("mcSetores").textContent = setores.length + (setores.length === 1 ? " setor" : " setores");
@@ -1544,10 +1660,10 @@ function salvarEditor() {
 
 /* ----- Equipe (líder) ----- */
 function renderEquipe() {
-    var t = usuarios.filter(function (u) { return u.papel !== "admin"; });
+    var t = usuarios.filter(function (u) { return u.id !== sessao; });
     $("listaEquipe").innerHTML = t.length ? t.map(function (u) {
         return '<div class="membro" onclick="abrirEditor(' + u.id + ')">' + avatarHTML(u, "av") +
-               '<div class="info"><b>' + esc(u.nome) + '</b><small>' + esc(u.funcao) + (u.papel === "compras" ? ' · acesso Compras' : '') + '</small></div>' +
+               '<div class="info"><b>' + esc(u.nome) + '</b><small>' + esc(u.funcao) + (u.papel === "compras" ? ' · acesso Compras' : (u.papel === "admin" ? ' · Líder' : '')) + '</small></div>' +
                '<button class="ed" onclick="event.stopPropagation();abrirEditor(' + u.id + ')" aria-label="Editar"><i class="fa-solid fa-pen"></i></button>' +
                '<button onclick="event.stopPropagation();removerTecnico(' + u.id + ')" aria-label="Remover"><i class="fa-solid fa-trash"></i></button></div>';
     }).join("") : '<div class="vazio">Ninguém cadastrado na equipe.</div>';
@@ -1556,12 +1672,13 @@ function renderEquipe() {
 function addTecnico() {
     var nome = $("eqNome").value.trim();
     var pin = $("eqPin").value.trim();
-    var papel = $("eqPapel").value === "compras" ? "compras" : "tecnico";
+    var papelSel = $("eqPapel").value;
+    var papel = papelSel === "compras" ? "compras" : (papelSel === "admin" ? "admin" : "tecnico");
     if (!nome) { toast("Informe o nome"); return; }
     if (!/^\d{4}$/.test(pin)) { toast("A senha deve ter 4 números"); return; }
     usuarios.push({
         id: proximoId(usuarios), nome: nome, papel: papel, pin: pin,
-        funcao: $("eqFuncao").value.trim() || (papel === "compras" ? "Compras" : "Técnico de Manutenção"), tel: "", foto: ""
+        funcao: $("eqFuncao").value.trim() || (papel === "compras" ? "Compras" : (papel === "admin" ? "Líder de Manutenção" : "Técnico de Manutenção")), tel: "", foto: ""
     });
     salvar();
     $("eqNome").value = "";
@@ -1573,6 +1690,7 @@ function addTecnico() {
 }
 
 function removerTecnico(id) {
+    if (id === sessao) { toast("Você não pode remover o seu próprio acesso"); return; }
     var abertas = ordens.filter(function (o) { return o.tecId === id && o.status !== "final"; }).length;
     if (abertas) { toast("Reatribua as " + abertas + " OS abertas dele antes de remover"); return; }
     pedirConfirmacao({
@@ -2370,17 +2488,40 @@ function pontosOS(o) {
     if (o.elogio) p += 5;                                          // elogio do líder
     return p;
 }
+/* Perda de pontos por atraso: cada dia depois do prazo de uma OS designada custa
+   PENAL_DIA pontos, até PENAL_MAX_DIAS dias por OS (teto de -10). Vale para a OS ainda
+   aberta (o desconto vai crescendo a cada dia) e para a que foi finalizada com atraso.
+   O desconto cai no período (semana/mês) em que o dia de atraso aconteceu. */
+var PENAL_DIA = 2;
+var PENAL_MAX_DIAS = 5;
+function penalidadeTec(tecId, ini, fim) {
+    var zero = (empresa && empresa.zeroEm) || "", hj = hoje(), total = 0;
+    ordens.forEach(function (o) {
+        if (o.tecId !== tecId || o.origem !== "designada" || !o.data || o.zerada) return;
+        if (o.status !== "aguardando" && o.status !== "andamento" && o.status !== "final") return;
+        var fimAtraso = o.status === "final" ? o.concluida : hj;
+        if (!fimAtraso) return;
+        for (var k = 1; k <= PENAL_MAX_DIAS; k++) {
+            var d = addDias(o.data, k);
+            if (d > fimAtraso) break;
+            if (d < ini || d > fim || d <= zero) continue;   // fora do período ou antes do "zerar tudo"
+            total += PENAL_DIA;
+        }
+    });
+    return total;
+}
 function pontosDoMes(tecId, mes) {
     var t = 0, n = 0;
     osDoTec(tecId).forEach(function (o) {
         if (mesDe(o.concluida) === mes) { t += pontosOS(o); n++; }
     });
-    return { pts: t, n: n };
+    var pen = penalidadeTec(tecId, mes + "-01", mes + "-31");
+    return { pts: t - pen, n: n, pen: pen };
 }
 function rankingMes(mes) {
     return usuarios.filter(function (u) { return u.papel === "tecnico"; }).map(function (u) {
         var r = pontosDoMes(u.id, mes);
-        return { u: u, pts: r.pts, n: r.n };
+        return { u: u, pts: r.pts, n: r.n, pen: r.pen };
     }).sort(function (a, b) { return b.pts - a.pts || b.n - a.n || a.u.nome.localeCompare(b.u.nome); });
 }
 
@@ -2400,13 +2541,14 @@ function pontosDoPeriodo(tecId, ini, fim) {
     osDoTec(tecId).forEach(function (o) {
         if (o.concluida >= ini && o.concluida <= fim) { t += pontosOS(o); n++; }
     });
-    return { pts: t, n: n };
+    var pen = penalidadeTec(tecId, ini, fim);
+    return { pts: t - pen, n: n, pen: pen };
 }
 function rankingSemana(ini) {
     var fim = addDias(ini, 6);
     return usuarios.filter(function (u) { return u.papel === "tecnico"; }).map(function (u) {
         var r = pontosDoPeriodo(u.id, ini, fim);
-        return { u: u, pts: r.pts, n: r.n };
+        return { u: u, pts: r.pts, n: r.n, pen: r.pen };
     }).sort(function (a, b) { return b.pts - a.pts || b.n - a.n || a.u.nome.localeCompare(b.u.nome); });
 }
 // vencedores da semana: quem empatar em pontos e em OS com o 1º divide o título
@@ -2453,7 +2595,8 @@ function renderRanking() {
         return '<div class="rank-linha' + (x.u.id === sessao ? " eu" : "") + '" onclick="abrirConquistas(' + x.u.id + ')">' +
             '<span class="rk-pos">' + pos + '</span>' + avatarHTML(x.u, "rk-av") +
             '<div class="rk-tx"><b>' + esc(x.u.nome) + (x.u.id === sessao ? " (você)" : "") + '</b>' +
-            '<small>' + x.n + (x.n === 1 ? " OS finalizada" : " OS finalizadas") + '</small></div>' +
+            '<small>' + x.n + (x.n === 1 ? " OS finalizada" : " OS finalizadas") +
+            (x.pen ? ' · <span class="rk-pen">−' + x.pen + ' por atraso</span>' : '') + '</small></div>' +
             '<span class="rk-pts">' + x.pts + '<small>pts</small></span></div>';
     }).join("");
 
@@ -2471,7 +2614,7 @@ function renderRanking() {
         var ant = rankingMes(mesAnterior()).filter(function (x) { return x.pts > 0; })[0];
         if (ant) h += '<p class="dica" style="margin:12px 0 0">👑 Técnico do mês passado: <b>' + esc(ant.u.nome) + '</b> (' + ant.pts + ' pts)</p>';
     }
-    h += '<p class="dica" style="margin:8px 0 0">Pontos: 10 por OS finalizada · +5 no prazo · +3 fotos de antes e depois · +2 relatório · +5 elogio do líder. Toque em alguém para ver as conquistas.</p>';
+    h += '<p class="dica" style="margin:8px 0 0">Pontos: 10 por OS finalizada · +5 no prazo · +3 fotos de antes e depois · +2 relatório · +5 elogio do líder. <b>Atraso tira 2 pontos por dia</b> (até 10 por OS), mesmo com a OS ainda aberta. Toque em alguém para ver as conquistas.</p>';
     box.innerHTML = h;
 }
 

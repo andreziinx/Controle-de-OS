@@ -1179,6 +1179,31 @@ a{ cursor:pointer; }
 .sino-badge.on{ display:flex; }
 .sino.toca i{ animation:toca 1s ease 2; }
 
+/* Estado da conexão com o banco (fica escondido quando está tudo sincronizado) */
+.sinc{
+    width:42px; height:42px; border:none; border-radius:50%;
+    background:rgba(255,255,255,.18); color:#fff; font-size:16px;
+    display:none; align-items:center; justify-content:center;
+}
+.sinc.on{ display:flex; }
+.sinc .fa-rotate{ animation:gira 1.2s linear infinite; }
+@keyframes gira{ from{ transform:rotate(0); } to{ transform:rotate(360deg); } }
+.sinc.offline{ background:rgba(229,57,53,.85); }
+.sinc.enviando{ background:rgba(255,255,255,.28); }
+
+/* Linhas de status (tela "Conexão com o banco") */
+.conf-linha{
+    display:flex; align-items:flex-start; gap:10px;
+    padding:10px 12px; border-radius:12px; margin-bottom:8px;
+    background:#F5F7FB; font-size:13px;
+}
+.conf-linha i{ font-size:16px; margin-top:2px; }
+.conf-linha b{ display:block; font-size:13.5px; }
+.conf-linha small{ display:block; color:var(--cinza); font-size:11.5px; margin-top:2px; }
+.conf-linha.ok i{ color:#2E7D32; }
+.conf-linha.ruim{ background:#FDECEA; }
+.conf-linha.ruim i{ color:#C62828; }
+
 @keyframes toca{
     0%,100%{ transform:rotate(0); }
     20%{ transform:rotate(18deg); }
@@ -2695,3 +2720,6 @@ body.folha-aberta{ overflow:hidden; }
 #festaBox:not(:empty){ position:relative; z-index:2; margin-top:-55px; }
 #festaBox .festa{ margin-top:0; }
 #festaBox:not(:empty) + .resumo{ margin-top:14px; }
+
+/* Ranking: perda de pontos por atraso */
+.rk-pen{ color:#D32F2F; font-weight:bold; }

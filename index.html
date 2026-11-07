@@ -74,16 +74,6 @@
             <i class="fa-solid fa-bell"></i>
             <span class="sino-badge" id="sinoBadge">0</span>
         </button>
-        <button class="sinc" id="sinc" onclick="abrirDadosConexao()" aria-label="Estado da conexão" title="Estado da conexão">
-            <svg class="ico-on" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.96A6 6 0 0 0 6.2 9.2A4.4 4.4 0 0 0 7 19h10.5z" opacity=".35"/>
-                <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.96A6 6 0 0 0 6.2 9.2A4.4 4.4 0 0 0 7 19h10.5z"/>
-            </svg>
-            <svg class="ico-off" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M17.5 19a4.5 4.5 0 0 0 .5-8.96A6 6 0 0 0 6.2 9.2A4.4 4.4 0 0 0 7 19h10.5z" opacity=".45"/>
-                <path d="M3 3l18 18"/>
-            </svg>
-        </button>
         <div class="avatar-mini" id="topoAvatar" onclick="ir('perfil')">A</div>
     </div>
 </header>
@@ -410,6 +400,12 @@
         <p class="dica" style="margin:0 0 4px">Zera conquistas, nível, pontos e os rankings semanal e mensal de todos os técnicos, para recomeçarem do zero. As OS não são apagadas.</p>
         <p class="dica" id="zeroInfo" style="margin:0 0 12px"></p>
         <button class="btn-perigo cheio" onclick="zerarConquistas()"><i class="fa-solid fa-rotate-left"></i> Zerar conquistas e ranking</button>
+    </div>
+
+    <div class="form-card">
+        <div class="form-titulo"><i class="fa-solid fa-cloud-arrow-up"></i> Conexão com o banco</div>
+        <p class="dica" style="margin:0 0 12px">Confira se os dados estão chegando ao servidor. Se algo não sincronizar, o teste mostra o motivo.</p>
+        <button class="btn-sec cheio" onclick="abrirDadosConexao()"><i class="fa-solid fa-plug-circle-check"></i> Ver estado e testar</button>
     </div>
 
 </section>

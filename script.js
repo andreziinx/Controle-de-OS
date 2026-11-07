@@ -535,46 +535,18 @@ function ir(nome) {
 
 /* ==========================================
    ESTADO DA CONEXÃO COM O BANCO
-   Fica escondido quando está tudo sincronizado; só aparece quando há
-   algo para o usuário saber (enviando, sem internet ou erro).
+   O indicador do topo fica SEMPRE escondido (o usuário não quis ícone ali).
+   A tela de diagnóstico continua disponível em abrirDadosConexao().
+   Esta função só mantém o selo do avatar escondido, para o caso de alguém
+   reativá-lo no HTML no futuro.
 ========================================== */
 function atualizarSinc() {
     var b = $("sinc");
     if (!b) return;
-    var semServidor = (typeof sb === "undefined") || !sb;
-    var ocupado = typeof sbOcupado !== "undefined" && sbOcupado;
-    var online = typeof sbOnline !== "undefined" && sbOnline;
-
-    if (!user() || semServidor) {
-        b.classList.remove("on", "offline", "online", "enviando");
-        return;
-    }
-
-    if (ocupado) {
-        b.classList.add("on", "enviando");
-        b.classList.remove("offline", "online");
-        b.title = "Enviando dados para o servidor...";
-        return;
-    }
-    if (!online) {
-        b.classList.add("on", "offline");
-        b.classList.remove("enviando", "online");
-        b.title = "Sem conexão com o servidor. Tudo continua salvo neste aparelho.";
-        return;
-    }
-    // Tudo certo: a nuvem verde confirma a sincronização e apaga em 4 segundos
-    b.classList.add("on", "online");
-    b.classList.remove("offline", "enviando");
-    b.title = "Sincronizado com o servidor";
-    clearTimeout(atualizarSinc.h);
-    atualizarSinc.h = setTimeout(function () {
-        if (!b.classList.contains("offline") && !b.classList.contains("enviando")) {
-            b.classList.remove("on", "online");
-        }
-    }, 4000);
+    b.classList.remove("on", "offline", "online", "enviando");
 }
 
-// Tela explicando a conexão (aberta ao tocar no ícone da nuvem)
+// Tela explicando a conexão (Perfil > Dados e backup > Conexão com o banco)
 function abrirDadosConexao() {
     var semServidor = (typeof sb === "undefined") || !sb;
     var online = typeof sbOnline !== "undefined" && sbOnline;

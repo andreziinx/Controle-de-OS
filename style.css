@@ -51,9 +51,8 @@ a{ cursor:pointer; }
     gap:12px;
 }
 
-/* Botões redondos do topo (sino e conexão) */
-.topo-linha > .sino,
-.topo-linha > .sinc{
+/* Botões redondos do topo (sino) */
+.topo-linha > .sino{
     flex:0 0 auto;
     width:42px;
     height:42px;
@@ -1187,30 +1186,9 @@ a{ cursor:pointer; }
 .sino-badge.on{ display:flex; }
 .sino.toca i{ animation:toca 1s ease 2; }
 
-/* Estado da conexão com o banco (fica escondido quando está tudo sincronizado)
-   O desenho é feito em SVG aqui mesmo: não depende do Font Awesome, que às
-   vezes carrega atrasado e mostrava a nuvem preta no meio do botão. */
-.sinc{
-    width:42px; height:42px; padding:0; border:none; border-radius:50%;
-    background:rgba(255,255,255,.18); color:#fff;
-    display:none; align-items:center; justify-content:center;
-    flex:0 0 auto; position:relative;
-    -webkit-tap-highlight-color:transparent;
-}
-.sinc.on{ display:flex; }
-.sinc svg{
-    width:21px; height:21px; display:block;
-    fill:none; stroke:currentColor; stroke-width:2;
-    stroke-linecap:round; stroke-linejoin:round;
-}
-.sinc .ico-off{ display:none; }
-.sinc.offline .ico-on{ display:none; }
-.sinc.offline .ico-off{ display:block; }
-.sinc.enviando{ background:rgba(255,255,255,.28); }
-.sinc.enviando svg{ animation:gira 1.2s linear infinite; }
-.sinc.online{ background:rgba(46,125,50,.9); }
-.sinc.offline{ background:rgba(229,57,53,.9); }
-@keyframes gira{ from{ transform:rotate(0); } to{ transform:rotate(360deg); } }
+/* O indicador de conexão no topo foi removido a pedido do usuário.
+   O diagnóstico agora fica em Perfil > Dados e backup > Conexão com o banco
+   (funções abrirDadosConexao e testarConexao no script.js). */
 
 /* Linhas de status (tela "Conexão com o banco") */
 .conf-linha{

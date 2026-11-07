@@ -62,16 +62,16 @@ Roda como site/PWA instalável e sincroniza pelo Supabase.
 - `sbAtualizar` não sobrescreve a tela quando o servidor devolve equipe vazia
   (`if (!usuarios.length) return`).
 - Evento `online` do navegador dispara `sbAtualizar()` na hora.
-- Estado da conexão visível no topo (`#sinc` → `atualizarSinc()`); a tela
-  "Conexão com o banco" (`abrirDadosConexao`) tem o botão **Testar agora**
-  (`testarConexao`), que lê uma linha de cada tabela.
-- O ícone de conexão é **SVG dentro do `index.html`**, não Font Awesome: se a
-  biblioteca de ícones atrasar, o desenho não quebra (antes aparecia uma nuvem
-  preta num quadrado branco). Estados: escondido (sincronizado), verde por 4 s
-  após sincronizar, girando (enviando), vermelho (sem servidor).
-- `.topo-linha > .sino` e `> .sinc` precisam de `flex:0 0 auto` e 42x42: o
-  `.topo-textos` tem `flex:1` e espremia os botões.
-- Ao publicar mudanças em `supabase.js`, subir `VERSAO` no `sw.js` (atual: v9),
+- **Não há indicador de conexão no topo** (removido a pedido do usuário: poluía a
+  tela inicial). `atualizarSinc()` existe só para manter o antigo `#sinc` escondido.
+  O diagnóstico fica em **Perfil > Dados e backup > Conexão com o banco**
+  (`abrirDadosConexao`), com o botão **Testar agora** (`testarConexao`), que lê uma
+  linha de cada tabela e mostra o motivo de qualquer falha.
+- Avisos de conexão continuam aparecendo como `toast` quando algo dá errado (falha
+  de permissão/schema e bucket de fotos ausente, este último uma vez só).
+- Em telas estreitas o topo fica apertado: o `.topo-textos` tem `flex:1` e espremia
+  os botões. Por isso nada de ícone extra no meio — só o sino (42x42) e o avatar.
+- Ao publicar mudanças em `supabase.js`, subir `VERSAO` no `sw.js` (atual: v11),
   senão o app instalado continua com o arquivo antigo.
 
 ## Estado do banco (conferido)

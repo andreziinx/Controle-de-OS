@@ -114,12 +114,28 @@ Roda como site/PWA instalável e sincroniza pelo Supabase.
 - **"Minhas" voltava ligado**: `iniciarSessao` e `salvarOS` deixam `soMinhas = false`,
   então a lista mostra as OS dos colegas (somente leitura). `passa()` continua
   escondendo as dos outros quando o chip "Minhas" está ligado.
-- **OS aberta pelo técnico pode ficar em andamento**: caixa "Abrir esta OS agora e
-  deixar em andamento" (`#fAndamento`, cartão `#cAndamento`) no formulário do técnico.
-  Marcada → `status: "andamento"` + `aberta`/`abertaHora` e `data` = hoje (a
-  `concluida`/`concluidaHora` só entram em `finalizarOS`). Sem marcar → segue como
-  antes (relatório já finalizado). `rotulosForm()` troca o botão para "Abrir OS" e a
-  descrição vira opcional.
+- **OS do técnico nasce EM ANDAMENTO** (decisão de 11/11, substitui a caixinha
+  "Abrir esta OS agora"): `salvarOS` grava `status: "andamento"` + `aberta`/`abertaHora`
+  e `data` = hoje; `concluida`/`concluidaHora` só entram em `finalizarOS`. O botão do
+  formulário diz **Abrir OS** e a descrição do problema é opcional (o serviço realizado
+  é cobrado depois, ao finalizar, na tela da OS). O bloco "Registrar serviço feito /
+  Designar a outro técnico" (`#cModo`, `#segModo`, `setModoDesig`) saiu da tela do
+  técnico; `modoDesig` continua existindo (falso) para o código do líder. O cartão
+  `#cAndamento` agora é só explicativo (sem checkbox).
+- **Fluxo**: técnico abre a OS → fica em "Em andamento" → entra em **Minhas** → abre a
+  OS → confere fotos/materiais/assinatura → **Finalizar OS**.
+- **Aviso ao líder**: `avisarLideres(acao, o, op)` avisa todo `papel === "admin"`
+  (menos quem fez a ação) ao criar/designar/finalizar OS. Na **exclusão** o líder
+  também é avisado mesmo quando foi ele quem apagou (`excluirOS` chama com
+  `{ semExcluir: false }`). O aviso entra em `avisos` (sino, notificação e lista).
+  Aviso de OS excluída usa `tipo: "av"` em `alertas()` (a OS já não existe, então
+  não deve chamar `abrirOS`).
+- **Designar a outro técnico continua no formulário do técnico** (`#cModo`, `#segModo`,
+  `setModoDesig`): botão "Abrir OS para mim" (padrão, fica em andamento) e
+  "Designar a outro técnico" (modo do líder: origem `designada`, `status aguardando`,
+  avisa líder e técnico). Em `rotulosForm` o botão diz "Designar OS" nesse modo.
+- `notificarSistema` guarda em `mc_n_<sessao>_<dia>_os` as OS já notificadas no dia,
+  para o pop-up de abrir/finalizar/excluir não repetir a cada sincronização.
 - **Técnico edita e exclui a própria OS de campo em andamento**: `podeEditar`,
   `excluirOS` (técnico só apaga `origem === "campo"` e `tecId === sessao`; OS
   finalizada com assinatura só o líder apaga). Botões **Editar OS**, **Finalizar OS**

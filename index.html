@@ -117,18 +117,18 @@
         <input type="hidden" id="fId">
         <input type="hidden" id="fPrior" value="media">
 
-        <!-- Somente técnico: registrar serviço feito, abrir OS em andamento OU designar a outro técnico -->
+        <!-- Somente técnico: abrir OS para si (fica em andamento) OU designar a outro técnico -->
         <div class="form-card so-toggle" id="cModo">
             <div class="seg dois" id="segModo">
-                <button type="button" class="on" data-m="reg" onclick="setModoDesig(false)"><i class="fa-solid fa-clipboard-check"></i> Registrar serviço feito</button>
+                <button type="button" class="on" data-m="reg" onclick="setModoDesig(false)"><i class="fa-solid fa-person-digging"></i> Abrir OS para mim</button>
                 <button type="button" data-m="des" onclick="setModoDesig(true)"><i class="fa-solid fa-user-group"></i> Designar a outro técnico</button>
             </div>
         </div>
 
-        <!-- Somente técnico, fora do modo "designar": abrir a OS agora deixa ela em andamento -->
+        <!-- Somente técnico: abre a OS agora (fica "Em andamento" até finalizar) -->
         <div class="form-card so-tec" id="cAndamento">
-            <label class="check"><input type="checkbox" id="fAndamento"> <i class="fa-solid fa-person-digging"></i> Abrir esta OS agora e deixar <b>em andamento</b></label>
-            <p class="dica" style="margin:6px 0 0">Com a opção marcada, a OS fica em andamento e você a termina depois pelo botão <b>Finalizar OS</b> (podendo voltar e adicionar fotos e materiais). Sem marcar, o serviço é registrado como já finalizado.</p>
+            <div class="form-titulo"><i class="fa-solid fa-person-digging"></i> Abrir OS</div>
+            <p class="dica" style="margin:0">Ao salvar, a OS fica <b>Em andamento</b> nas suas OS. Depois é só abrir a OS e tocar em <b>Finalizar OS</b>, acrescentando fotos, materiais e assinatura.</p>
         </div>
 
         <div class="form-card">

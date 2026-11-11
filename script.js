@@ -746,7 +746,10 @@ function alertas() {
 
     avisos.forEach(function (a) {
         if (a.para !== sessao || a.em < recente) return;
-        lista.push({ key: "v" + a.id, nivel: 3, cor: a.cor || "verde", ic: a.ic || "fa-circle-check", tipo: "os", ref: a.osId, t: a.t, s: a.s });
+        // Aviso de OS excluída: a OS já não existe, então o aviso é só informativo
+        var sumiu = a.ic === "fa-trash-can" || /excluiu a OS/.test(a.t || "");
+        lista.push({ key: "v" + a.id, nivel: 3, cor: a.cor || "verde", ic: a.ic || "fa-circle-check",
+            tipo: sumiu ? "av" : "os", ref: a.osId, t: a.t, s: a.s });
     });
 
     eventos.forEach(function (e) {
@@ -846,7 +849,7 @@ function abrirAlertas() {
         h += '<div class="vazio"><i class="fa-regular fa-circle-check"></i>Tudo em dia! Nenhum aviso no momento.</div>';
     } else {
         h += lista.map(function (a) {
-            var acao = a.tipo === "niver" ? "irNiver('" + a.ref + "')" : a.tipo === "meta" ? "fecharOS();ir('inicio')" : a.tipo === "os" ? "abrirOS(" + a.ref + ")" : a.tipo === "compra" ? "abrirCompra(" + a.ref + ",true)" : a.tipo === "est" ? "abrirPeca(" + a.ref + ")" : "irEvento(" + a.ref + ")";
+            var acao = a.tipo === "niver" ? "irNiver('" + a.ref + "')" : a.tipo === "meta" ? "fecharOS();ir('inicio')" : a.tipo === "os" ? "abrirOS(" + a.ref + ")" : a.tipo === "av" ? "fecharOS()" : a.tipo === "compra" ? "abrirCompra(" + a.ref + ",true)" : a.tipo === "est" ? "abrirPeca(" + a.ref + ")" : "irEvento(" + a.ref + ")";
             return '<div class="notif-wrap"><div class="notif-fundo"><i class="fa-solid fa-trash-can"></i></div>' +
                 '<div class="notif ' + a.cor + (lidos.indexOf(a.key) === -1 ? " nova" : "") + '" data-keys="' + esc((a.keys || [a.key]).join(",")) + '" onclick="' + acao + '">' +
                 '<div class="notif-ic"><i class="fa-solid ' + a.ic + '"></i></div>' +
@@ -973,15 +976,31 @@ function mostrarNotif(t, b) {
 function notificarSistema() {
     if (!user() || !("Notification" in window) || Notification.permission !== "granted") return;
     var chave = "mc_n_" + sessao + "_" + hoje();
-    var feitos = [];
+    var feitos = [], feitosOS = [];
     try { feitos = JSON.parse(localStorage.getItem(chave) || "[]"); } catch (e) {}
+    // OS que já tiveram notificação hoje: evita repetir o pop-up a cada
+    // sincronização e também evita notificar "finalizou/excluiu" duas vezes.
+    try { feitosOS = JSON.parse(localStorage.getItem(chave + "_os") || "[]"); } catch (e) {}
 
-    var novos = alertas().filter(function (a) { return feitos.indexOf(a.key) === -1; });
+    var novos = alertas().filter(function (a) {
+        if (feitos.indexOf(a.key) !== -1) return false;
+        // avisos de OS (aberta, finalizada, excluída) só uma vez por OS
+        if (a.tipo === "os" || a.tipo === "av") {
+            if (feitosOS.indexOf(String(a.ref)) !== -1) return false;
+        }
+        return true;
+    });
     novos.slice(0, 3).forEach(function (a) { mostrarNotif(a.t, a.s); });
     if (novos.length > 3) mostrarNotif("Você tem mais " + (novos.length - 3) + " avisos", "Abra o app para ver.");
 
-    novos.forEach(function (a) { feitos.push(a.key); });
-    try { localStorage.setItem(chave, JSON.stringify(feitos)); } catch (e) {}
+    novos.forEach(function (a) {
+        feitos.push(a.key);
+        if ((a.tipo === "os" || a.tipo === "av") && feitosOS.indexOf(String(a.ref)) === -1) feitosOS.push(String(a.ref));
+    });
+    try {
+        localStorage.setItem(chave, JSON.stringify(feitos));
+        localStorage.setItem(chave + "_os", JSON.stringify(feitosOS));
+    } catch (e) {}
 }
 
 function irEvento(id) {
@@ -1993,14 +2012,19 @@ function setPrior(p) {
 
 function rotulosForm() {
     var adm = ehAdmin() || modoDesig, ed = $("fId").value;
-    var andando = !!($("fAndamento") && $("fAndamento").checked) && !adm;
-    $("lblData").textContent = adm ? "Data prevista" : (andando ? "Data de hoje (início do serviço)" : "Data do serviço");
+    $("lblData").textContent = adm ? "Data prevista" : "Data do serviço";
     var oEd = ed ? buscar(ed) : null;
     var relDes = !!oEd && !adm && oEd.origem === "designada";
-    $("lblDesc").textContent = adm ? "Descrição do serviço a executar" : (relDes ? "Relatório do serviço (opcional)" : (andando ? "O que precisa ser feito (opcional)" : "Serviço realizado *"));
-    $("fDesc").placeholder = adm ? "Descreva o defeito e o que deve ser feito..." : (relDes ? "O que foi feito, peças trocadas..." : (andando ? "Descreva o problema encontrado e o que vai fazer..." : "Descreva o que foi feito em campo..."));
+    // Técnico abrindo OS para si: descrição é o problema (serviço realizado entra ao
+    // finalizar). Designando para outro técnico, segue o texto do líder.
+    var abrindo = !adm && !ed;
+    $("lblDesc").textContent = adm ? "Descrição do serviço a executar"
+        : (relDes ? "Relatório do serviço (opcional)" : (abrindo ? "Descrição do problema (opcional)" : "Serviço realizado *"));
+    $("fDesc").placeholder = adm ? "Descreva o defeito e o que deve ser feito..."
+        : (relDes ? "O que foi feito, peças trocadas..." : (abrindo ? "O que está acontecendo, o que precisa ser feito..." : "Descreva o que foi feito em campo..."));
     $("btnSalvar").innerHTML = '<i class="fa-solid fa-check"></i> ' +
-        (ed ? "Salvar alterações" : (adm ? "Criar e designar OS" : (andando ? "Abrir OS" : "Registrar serviço")));
+        (ed ? "Salvar alterações"
+            : (modoDesig ? "Designar OS" : (ehAdmin() ? "Criar e designar OS" : "Abrir OS")));
 }
 
 function limparErros() {
@@ -2016,7 +2040,7 @@ function novaOS(d) {
     $("fId").value = "";
     limparErros();
     montarSelects();
-    $("cModo").style.display = "";
+    if ($("cModo")) $("cModo").style.display = "";
     $("fTitulo").readOnly = false;
     var lblData = $("fData").closest("label");
     if (lblData) lblData.style.display = "";
@@ -2025,7 +2049,6 @@ function novaOS(d) {
     document.querySelectorAll("#segModo button").forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-m") === "reg"); });
     montarTecSelect("");
     $("fData").value = typeof d === "string" ? d : (ehAdmin() ? somaDias(1) : hoje());
-    if ($("fAndamento")) $("fAndamento").checked = false;
     setPrior("media");
     formFotos = { antes: [], depois: [] };
     formItens = [];
@@ -2076,13 +2099,41 @@ function editarOS(id) {
     sigIniciar("sigForm", formAssin, function (v) { formAssin = v; });
 }
 
+/* ==========================================
+   AVISOS AO LÍDER
+   Toda OS criada, designada, finalizada ou excluída avisa o líder
+   (sino, lista de avisos e notificação no celular).
+   Por padrão não avisa quem fez a própria ação; na exclusão o líder
+   também quer saber, então ali se usa { semExcluir: false }.
+   ========================================== */
+function avisarLideres(acao, o, op) {
+    if (!o) return;
+    op = op || {};
+    var de = nomeDe(sessao);
+    var apagada = acao === "excluiu a OS";
+    usuarios.filter(function (u) {
+        if (u.papel !== "admin") return false;
+        // ação de outro usuário → avisa todos os líderes; ação do próprio líder →
+        // só avisa se pedido (caso da exclusão, que o líder quer acompanhar)
+        if (u.id !== sessao) return true;
+        return !!(op.semExcluir === false);
+    }).forEach(function (l) {
+        avisos.push({
+            id: Date.now() + "_" + l.id + "_" + o.id + "_" + Math.random().toString(36).slice(2, 6),
+            para: l.id, osId: o.id, em: Date.now(),
+            ic: op.ic || (apagada ? "fa-trash-can" : acao === "finalizou a OS" ? "fa-flag-checkered" : "fa-clipboard-list"),
+            cor: op.cor || (apagada ? "verm" : acao === "finalizou a OS" ? "verde" : "azul"),
+            t: de + " " + acao + " " + num(o.id),
+            s: o.titulo + " · " + o.setor + (apagada ? " · OS excluída" : "") + (op.extra ? " · " + op.extra : "")
+        });
+    });
+}
+
 function salvarOS(ev) {
     ev.preventDefault();
     var adm = ehAdmin() || modoDesig;   // técnico designando também usa o fluxo do líder
     var oEd0 = $("fId").value ? buscar($("fId").value) : null;
     var relDes = !!oEd0 && !adm && oEd0.origem === "designada";   // técnico editando OS designada
-    // OS nova sendo ABERTA em andamento (técnico): descrição é opcional
-    var andando = !adm && !oEd0 && !!($("fAndamento") && $("fAndamento").checked);
     var ok = true;
     limparErros();
 
@@ -2097,7 +2148,9 @@ function salvarOS(ev) {
 
     if (adm && !$("fTec").value) { $("cTec").classList.add("invalido"); ok = false; }
 
-    if (!adm && !relDes && !andando) {
+    // OS nova do técnico é só abertura: a descrição do problema é opcional
+    // (o "Serviço realizado" é cobrado ao finalizar, na tela da OS).
+    if (!adm && !relDes && oEd0) {
         if (!$("fDesc").value.trim()) { $("cDesc").classList.add("invalido"); ok = false; }
     }
 
@@ -2154,10 +2207,9 @@ function salvarOS(ev) {
             nova.fotos = { antes: [], depois: [] };
             nova.itens = [];
             if (modoDesig) {   // técnico designou: avisa o(s) líder(es)
-                usuarios.filter(function (u) { return u.papel === "admin"; }).forEach(function (l) {
-                    avisos.push({ id: Date.now() + "_" + l.id, para: l.id, osId: nova.id, em: Date.now(),
-                                  t: nomeDe(sessao) + " designou a OS " + num(nova.id) + " para " + nomeDe(nova.tecId), s: nova.titulo + " · " + nova.setor });
-                });
+                avisarLideres("designou a OS " + num(nova.id) + " para " + nomeDe(nova.tecId), nova);
+            } else {
+                avisarLideres("criou a OS", nova);
             }
             toast("OS " + num(nova.id) + " enviada para " + nomeDe(nova.tecId) + " ✔");
             // avisa o técnico na hora (antes ele só descobria entrando na lista)
@@ -2169,28 +2221,18 @@ function salvarOS(ev) {
             nova.origem = "campo";
             nova.tecId = sessao;
             nova.prior = "media";
-            // O técnico escolhe: abrir a OS em andamento (e finalizar depois) ou
-            // registrar o serviço como já concluído.
-            var abrirAgora = !!($("fAndamento") && $("fAndamento").checked);
-            nova.status = abrirAgora ? "andamento" : "final";
+            // Toda OS do técnico já nasce EM ANDAMENTO: ele registra o serviço
+            // agora e finaliza depois, na tela da OS (botão "Finalizar OS").
+            nova.status = "andamento";
             nova.aberta = hoje();
             nova.abertaHora = horaAgora();
-            if (abrirAgora) {
-                nova.data = hoje();   // início do serviço (a conclusão só entra ao finalizar)
-            } else {
-                nova.concluida = base.data || hoje();
-                nova.concluidaHora = horaAgora();
-            }
+            nova.data = hoje();
             nova.fotos = { antes: formFotos.antes.slice(), depois: formFotos.depois.slice() };
             nova.itens = formItens.slice();
             if (formAssin) nova.assinatura = formAssin;
-            // avisa o líder (é ele quem vê a OS do técnico na tela inicial dele)
-            usuarios.filter(function (u) { return u.papel === "admin"; }).forEach(function (l) {
-                avisos.push({ id: Date.now() + "_" + l.id, para: l.id, osId: nova.id, em: Date.now(),
-                              t: nomeDe(sessao) + (abrirAgora ? " abriu a OS " : " registrou a OS ") + num(nova.id),
-                              s: nova.titulo + " · " + nova.setor });
-            });
-            toast(abrirAgora ? "OS " + num(nova.id) + " aberta e em andamento ✔" : "Serviço registrado ✔");
+            // avisa o líder na hora
+            avisarLideres("abriu a OS", nova);
+            toast("OS " + num(nova.id) + " aberta e em andamento ✔");
         }
         ordens.push(nova);
     }
@@ -2318,12 +2360,12 @@ function abrirOS(id) {
             h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar OS</button></div>';
         }
     } else if (souEu) {
-        // OS registrada pelo próprio técnico (origem "campo")
+        // OS aberta pelo próprio técnico: fica em andamento até o "Finalizar OS"
         if (o.status === "andamento") {
-            h += '<p class="dica" style="margin:0 0 10px">Esta OS está <b>em andamento</b>. Você pode voltar aqui e incluir fotos e materiais antes de terminar.</p>' +
+            h += '<p class="dica" style="margin:0 0 10px">Esta OS está <b>em andamento</b>. Antes de terminar, confira fotos, materiais e assinatura.</p>' +
                  '<div class="sheet-acoes"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar OS</button>' +
                  '<button class="btn-pri verde" style="margin-top:0" onclick="finalizarOS(' + o.id + ')"><i class="fa-solid fa-flag-checkered"></i> Finalizar OS</button></div>' +
-                 '<div class="sheet-acoes um"><button class="btn-perigo" onclick="excluirOS(' + o.id + ')"><i class="fa-solid fa-trash"></i> Excluir esta OS</button></div>';
+                 '<div class="sheet-acoes um"><button class="btn-sec" onclick="excluirOS(' + o.id + ')"><i class="fa-solid fa-trash"></i> Excluir esta OS</button></div>';
         } else {
             h += '<div class="sheet-acoes"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar relatório</button>' +
                  '<button class="btn-perigo" style="margin-top:0" onclick="excluirOS(' + o.id + ')"><i class="fa-solid fa-trash"></i> Excluir</button></div>';
@@ -2989,6 +3031,7 @@ function finalizarOS(id) {
     if (!o.concluida) o.concluida = hoje();
     if (!o.concluidaHora) o.concluidaHora = horaAgora();
     delete o.zerada;
+    avisarLideres("finalizou a OS", o);   // o líder é avisado de toda OS finalizada
     salvar();
     abrirOS(id);
     renderTudo();
@@ -3732,6 +3775,13 @@ function excluirOS(id) {
         ic: "fa-trash-can", titulo: rel ? "Excluir esta OS?" : "Excluir ordem de serviço?",
         texto: 'A <b>OS ' + num(o.id) + '</b> · ' + esc(o.titulo) + ' será apagada, com fotos e materiais. Essa ação não pode ser desfeita.'
     }, function () {
+        // Aviso ao líder sobre a exclusão (antes do filtro, senão a OS já não existe)
+        avisarLideres("excluiu a OS", o, {
+            semExcluir: !adm,                     // o líder que apagou também fica sabendo
+            ic: "fa-trash-can",
+            cor: "verm",
+            extra: adm ? "excluída pelo líder" : "excluída por " + nomeDe(sessao)
+        });
         ordens = ordens.filter(function (x) { return x.id !== Number(id); });
         salvar();
         fecharOS();
@@ -6421,8 +6471,6 @@ document.querySelectorAll("#segPrior button").forEach(function (b) {
 });
 
 $("fTitulo").addEventListener("input", function () { $("cTitulo").classList.remove("invalido"); });
-// "Abrir esta OS agora": troca o rótulo do botão e os textos do formulário
-if ($("fAndamento")) $("fAndamento").addEventListener("change", function () { rotulosForm(); });
 $("fileFoto").addEventListener("change", aoEscolherFotos);
 $("fileAvatar").addEventListener("change", aoEscolherAvatar);
 $("fileLogo").addEventListener("change", aoEscolherLogo);

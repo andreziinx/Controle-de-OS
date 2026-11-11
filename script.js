@@ -1019,7 +1019,7 @@ function htmlOS(o) {
         aviso +
         '<div class="os-rodape">' +
             '<span class="tag ' + s.c + '">' + s.t + '</span>' +
-            (o.status === "final"
+            (podeCompartilharOS(o)
                 ? '<button class="os-whats" onclick="event.stopPropagation(); compartilharOS(' + o.id + ')" aria-label="Compartilhar no WhatsApp"><i class="fa-brands fa-whatsapp"></i> WhatsApp</button>'
                 : "") +
             ((nFotos || nItens) ? '<span class="os-fotos">' +
@@ -2251,8 +2251,8 @@ function abrirOS(id) {
         h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="abrirAtribuir(' + o.id + ')"><i class="fa-solid fa-user-group"></i> Atribuir a outro técnico</button></div>';
     }
 
-    // OS finalizada: enviar o resumo para o WhatsApp (cliente, líder ou grupo)
-    if (o.status === "final") {
+    // Enviar o resumo da OS para o WhatsApp (líder ou técnico dono da OS)
+    if (podeCompartilharOS(o)) {
         h += '<div class="sheet-acoes um"><button class="btn-pri verde" onclick="compartilharOS(' + o.id + ')">' +
              '<i class="fa-brands fa-whatsapp"></i> Compartilhar no WhatsApp</button></div>' +
              '<div class="sheet-acoes um"><button class="btn-sec" onclick="copiarOS(' + o.id + ')">' +
@@ -2277,11 +2277,19 @@ function fecharOS() {
    Se o app não conseguir abrir sozinho (celular bloqueando), o resumo fica
    copiado para a área de transferência e o usuário cola onde quiser.
 ========================================== */
+function podeCompartilharOS(o) {
+    if (!o) return false;
+    return ehAdmin() || o.tecId === sessao;
+}
+
 function resumoOS(o) {
     var L = [];
     var tituloApp = (empresa && empresa.nome) ? empresa.nome : "Controle de Manutenção";
+    var situacao = o.status === "final" ? "Serviço concluído"
+                 : o.status === "andamento" ? "Em andamento"
+                 : "Aguardando início";
     L.push("*" + tituloApp + "*");
-    L.push("*OS " + num(o.id) + " — Serviço concluído*");
+    L.push("*OS " + num(o.id) + " — " + situacao + "*");
     L.push("");
     L.push("*Serviço:* " + (o.titulo || "—"));
     L.push("*Setor:* " + (o.setor || "—"));
@@ -2335,7 +2343,7 @@ function resumoOS(o) {
 function compartilharOS(id) {
     var o = buscar(id);
     if (!o) return;
-    if (o.status !== "final") { toast("Compartilhe apenas as OS finalizadas."); return; }
+    if (!podeCompartilharOS(o)) { toast("Você só pode compartilhar as suas OS."); return; }
 
     var texto = resumoOS(o);
 

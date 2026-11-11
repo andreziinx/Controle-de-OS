@@ -108,3 +108,32 @@ Roda como site/PWA instalável e sincroniza pelo Supabase.
 - Bibliotecas de fora (jsPDF e supabase-js) no `index.html` usam `defer`: se uma delas
   demorar ou falhar, o `script.js` roda do mesmo jeito (antes um erro ali parava tudo).
 - Hora da OS: campo `concluidaHora` ("HH:MM"), gravado ao finalizar (`finalizarOS`) e ao registrar serviço de campo. OS antigas não têm hora; o PDF mostra só a data nelas (`fmtDataHoraOS`).
+
+## OS aberta pelo técnico (revisão de 11/11)
+
+- **"Minhas" voltava ligado**: `iniciarSessao` e `salvarOS` deixam `soMinhas = false`,
+  então a lista mostra as OS dos colegas (somente leitura). `passa()` continua
+  escondendo as dos outros quando o chip "Minhas" está ligado.
+- **OS aberta pelo técnico pode ficar em andamento**: caixa "Abrir esta OS agora e
+  deixar em andamento" (`#fAndamento`, cartão `#cAndamento`) no formulário do técnico.
+  Marcada → `status: "andamento"` + `aberta`/`abertaHora` e `data` = hoje (a
+  `concluida`/`concluidaHora` só entram em `finalizarOS`). Sem marcar → segue como
+  antes (relatório já finalizado). `rotulosForm()` troca o botão para "Abrir OS" e a
+  descrição vira opcional.
+- **Técnico edita e exclui a própria OS de campo em andamento**: `podeEditar`,
+  `excluirOS` (técnico só apaga `origem === "campo"` e `tecId === sessao`; OS
+  finalizada com assinatura só o líder apaga). Botões **Editar OS**, **Finalizar OS**
+  e **Excluir** na tela da OS; fotos, materiais e assinatura liberados no "andamento".
+- `finalizarOS` não sobrescreve `concluida`/`concluidaHora` se já existirem.
+- Ao criar OS o app agora avisa: o líder (OS de campo) e o técnico escolhido (designada).
+- **Exclusão não chegava ao servidor**: `sbCarregar` só salvava o retrato (`sbSnap`)
+  no fim; quando caía no plano B ele ficava vazio e o app reenviava tudo, nunca
+  apagando no banco. Agora o retrato é montado em `sbCarregarDeVerdade` e no
+  `iniciarApp` do `script.js` (logo após `normalizar()`), e `sbEnviar` espera a
+  leitura terminar (`sbTravaLida`).
+- **Tela de carregamento travada**: `sbCarregar` desiste da espera em 9 s e abre com
+  os dados do aparelho (`sbLento`; se a leitura terminar depois, atualiza a tela).
+  `iniciarApp(r)` no `script.js` concentra a abertura e tem plano B em caso de erro.
+- `sw.js` está na **v21**. Cópias de segurança: `script.backup-20261111-1709.js` e
+  `supabase.backup-20261111-1709.js`.
+

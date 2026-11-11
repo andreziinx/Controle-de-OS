@@ -726,6 +726,8 @@ a{ cursor:pointer; }
 /* técnico no modo "designar a outro técnico": mostra os campos do líder e esconde os do relatório */
 .papel-tec.modo-desig #formOS .so-admin{ display:block !important; }
 .papel-tec.modo-desig #formOS .so-tec{ display:none !important; }
+/* a caixa "abrir em andamento" só existe no modo "registrar serviço" */
+.papel-tec.modo-desig #cAndamento{ display:none !important; }
 .seg.dois{ grid-template-columns:1fr 1fr; --pc:var(--azul); }
 .seg.dois button{ padding:12px 6px; line-height:1.25; }
 .seg.dois button i{ display:block; font-size:18px; margin-bottom:4px; }

@@ -184,23 +184,55 @@ function sbLocal() {
     ]);
 }
 
+// Trava com temporizador: numa OS grande, ou com o servidor (Supabase) fora do ar,
+// o envio pode demorar mais que o prazo do socorro abaixo. Aí este contador
+// mantém a resposta pendente em vez de fingir que deu certo.
+var sbTravaLida = 0;
+
 // Lê uma tabela inteira (pagina de 1000 em 1000: o Supabase corta em 1000 linhas)
 async function sbLerTabela(nome, select) {
     var tudo = [], passo = 1000, de = 0;
     for (;;) {
-        var r = await sb.from(nome).select(select).range(de, de + passo - 1);
-        if (r.error) throw r.error;
-        var lote = Array.isArray(r.data) ? r.data : [];
-        tudo = tudo.concat(lote);
-        if (lote.length < passo) break;
-        de += passo;
-        if (de > 50000) break;                 // trava de segurança
+        sbTravaLida++;
+        try {
+            var r = await sb.from(nome).select(select).range(de, de + passo - 1);
+            if (r.error) throw r.error;
+            var lote = Array.isArray(r.data) ? r.data : [];
+            tudo = tudo.concat(lote);
+            if (lote.length < passo) break;
+            de += passo;
+            if (de > 50000) break;             // trava de segurança
+        } finally {
+            sbTravaLida--;
+        }
     }
     return tudo;
 }
 
 async function sbCarregar() {
     if (!sb) return sbLocal();
+    var lento;
+    // Rede de segurança: se o servidor não responder (internet ruim, projeto
+    // pausado), o app abre com os dados do aparelho em vez de ficar na tela de
+    // carregamento para sempre. A leitura original continua rodando.
+    var lenta = new Promise(function (res) {
+        lento = setTimeout(function () { res(null); }, 9000);
+    });
+    var venceu = await Promise.race([sbCarregarDeVerdade(), lenta]);
+    clearTimeout(lento);
+
+    if (venceu === null) {
+        // ainda sem resposta: se o carregamento terminar sem erro logo depois,
+        // aproveita o que veio do servidor
+        sbLento = true;
+        return sbLocal();
+    }
+    return venceu;
+}
+
+var sbLento = false;
+
+async function sbCarregarDeVerdade() {
     try {
         var out = {};
         var nomes = ["ordens", "usuarios", "eventos", "avisos"];
@@ -240,6 +272,14 @@ async function sbCarregar() {
             cfg.empresa = local[5] || { nome: "", logo: "" };
         }
 
+        sbOnline = true;
+        sbFalhasSeguidas = 0;
+        sbAvisouRede = false;
+
+        // Guarda o que veio do servidor: o envio compara com este retrato.
+        // Antes isto só era feito no fim de sbCarregar(), e quando o banco estava
+        // vazio (ou a leitura caía no plano B) o retrato ficava vazio: o app
+        // reenviava tudo e NUNCA apagava no servidor a OS excluída aqui.
         sbSnap.ordens = sbMapa(out.ordens);
         sbSnap.usuarios = sbMapa(out.usuarios);
         sbSnap.eventos = sbMapa(out.eventos);
@@ -250,12 +290,22 @@ async function sbCarregar() {
             setores: cfg.setores ? JSON.stringify(cfg.setores) : null,
             empresa: cfg.empresa ? JSON.stringify(cfg.empresa) : null
         };
-        sbOnline = true;
-        sbFalhasSeguidas = 0;
-        sbAvisouRede = false;
 
         // Banco vazio: aproveita o que já existe neste aparelho (ou cria os dados iniciais)
         if (!out.usuarios.length) return sbLocal();
+
+        // O app já abriu com os dados do aparelho (o servidor demorou): junta
+        // agora o que veio do servidor, sem perder o que foi feito nesse meio-tempo.
+        if (sbLento) {
+            sbLento = false;
+            if (typeof user === "function" && user()) {
+                try {
+                    normalizar();
+                    aplicarMarca();
+                    renderTudo();
+                } catch (e6) { console.warn("Supabase:", e6); }
+            }
+        }
 
         return [
             out.ordens,
@@ -290,6 +340,9 @@ function sbSync() {
 
 async function sbEnviar() {
     if (!sb || !sbOnline) return;          // nunca envia sem ter lido o servidor antes
+    // Leitura em andamento (o app demorou e ainda está buscando): espera terminar,
+    // senão o retrato (sbSnap) seria comparado com dados incompletos.
+    if (sbTravaLida > 0) { sbSync(); return; }
     if (sbOcupado) { sbSync(); return; }
     sbOcupado = true;
     try {

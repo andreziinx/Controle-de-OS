@@ -454,6 +454,9 @@ function entrar() {
 
 function iniciarSessao(id) {
     sessao = id;
+    // ao abrir o app, a lista de OS começa mostrando TODAS (antes o "Minhas"
+    // ficava ligado e o técnico só via as próprias OS)
+    soMinhas = false;
     try { localStorage.setItem("mc_sessao", String(id)); } catch (e) {}
     var adm = ehAdmin();
     document.body.classList.toggle("papel-admin", adm);
@@ -1157,7 +1160,10 @@ function setFiltro(f) { filtro = f; renderOS(); }
 function toggleMinhas() { soMinhas = !soMinhas; renderOS(); }
 
 function passa(o) {
-    // "Minhas" desligado: vê também as OS dos colegas (somente leitura)
+    // "Minhas" desligado: vê também as OS dos colegas (somente leitura).
+    // Antes, esta linha cortava a lista também com o filtro desligado e o
+    // técnico só enxergava as próprias OS: a OS aberta por ele não aparecia
+    // para mais ninguém.
     if (soMinhas && o.tecId !== sessao) return false;
     if (filtro === "atrasadas") return atrasada(o);
     if (filtro === "hoje") return o.status !== "final" && o.data === hoje();
@@ -1987,18 +1993,22 @@ function setPrior(p) {
 
 function rotulosForm() {
     var adm = ehAdmin() || modoDesig, ed = $("fId").value;
-    $("lblData").textContent = adm ? "Data prevista" : "Data do serviço";
+    var andando = !!($("fAndamento") && $("fAndamento").checked) && !adm;
+    $("lblData").textContent = adm ? "Data prevista" : (andando ? "Data de hoje (início do serviço)" : "Data do serviço");
     var oEd = ed ? buscar(ed) : null;
     var relDes = !!oEd && !adm && oEd.origem === "designada";
-    $("lblDesc").textContent = adm ? "Descrição do serviço a executar" : (relDes ? "Relatório do serviço (opcional)" : "Serviço realizado *");
-    $("fDesc").placeholder = adm ? "Descreva o defeito e o que deve ser feito..." : (relDes ? "O que foi feito, peças trocadas..." : "Descreva o que foi feito em campo...");
+    $("lblDesc").textContent = adm ? "Descrição do serviço a executar" : (relDes ? "Relatório do serviço (opcional)" : (andando ? "O que precisa ser feito (opcional)" : "Serviço realizado *"));
+    $("fDesc").placeholder = adm ? "Descreva o defeito e o que deve ser feito..." : (relDes ? "O que foi feito, peças trocadas..." : (andando ? "Descreva o problema encontrado e o que vai fazer..." : "Descreva o que foi feito em campo..."));
     $("btnSalvar").innerHTML = '<i class="fa-solid fa-check"></i> ' +
-        (ed ? "Salvar alterações" : (adm ? "Criar e designar OS" : "Registrar serviço"));
+        (ed ? "Salvar alterações" : (adm ? "Criar e designar OS" : (andando ? "Abrir OS" : "Registrar serviço")));
 }
 
 function limparErros() {
-    ["cTitulo", "cTec", "cDesc"].forEach(function (id) { $(id).classList.remove("invalido"); });
-    $("novoSetorBox").style.display = "none";
+    ["cTitulo", "cTec", "cDesc"].forEach(function (id) {
+        var el = $(id);
+        if (el) el.classList.remove("invalido");
+    });
+    if ($("novoSetorBox")) $("novoSetorBox").style.display = "none";
 }
 
 function novaOS(d) {
@@ -2008,12 +2018,14 @@ function novaOS(d) {
     montarSelects();
     $("cModo").style.display = "";
     $("fTitulo").readOnly = false;
-    $("fData").closest("label").style.display = "";
+    var lblData = $("fData").closest("label");
+    if (lblData) lblData.style.display = "";
     modoDesig = false;
     document.body.classList.remove("modo-desig");
     document.querySelectorAll("#segModo button").forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-m") === "reg"); });
     montarTecSelect("");
     $("fData").value = typeof d === "string" ? d : (ehAdmin() ? somaDias(1) : hoje());
+    if ($("fAndamento")) $("fAndamento").checked = false;
     setPrior("media");
     formFotos = { antes: [], depois: [] };
     formItens = [];
@@ -2028,7 +2040,8 @@ function novaOS(d) {
 function podeEditar(o) {
     if (ehAdmin()) return o.origem === "designada";
     if (o.tecId !== sessao) return false;
-    // técnico edita o próprio relatório de campo e também a OS designada que já finalizou
+    // técnico edita o próprio relatório de campo (em andamento ou finalizado)
+    // e também a OS designada que já finalizou
     return o.origem === "campo" || (o.origem === "designada" && o.status === "final");
 }
 
@@ -2068,6 +2081,8 @@ function salvarOS(ev) {
     var adm = ehAdmin() || modoDesig;   // técnico designando também usa o fluxo do líder
     var oEd0 = $("fId").value ? buscar($("fId").value) : null;
     var relDes = !!oEd0 && !adm && oEd0.origem === "designada";   // técnico editando OS designada
+    // OS nova sendo ABERTA em andamento (técnico): descrição é opcional
+    var andando = !adm && !oEd0 && !!($("fAndamento") && $("fAndamento").checked);
     var ok = true;
     limparErros();
 
@@ -2082,7 +2097,7 @@ function salvarOS(ev) {
 
     if (adm && !$("fTec").value) { $("cTec").classList.add("invalido"); ok = false; }
 
-    if (!adm && !relDes) {
+    if (!adm && !relDes && !andando) {
         if (!$("fDesc").value.trim()) { $("cDesc").classList.add("invalido"); ok = false; }
     }
 
@@ -2117,7 +2132,12 @@ function salvarOS(ev) {
         } else {
             o.fotos = { antes: formFotos.antes.slice(), depois: formFotos.depois.slice() };
             o.itens = formItens.slice();
-            o.concluida = base.data || hoje();
+            // OS em andamento ainda não tem conclusão: a data só entra ao finalizar
+            if (o.status !== "final") {
+                o.data = base.data || o.data || hoje();
+            } else {
+                o.concluida = base.data || hoje();
+            }
             if (formAssin) o.assinatura = formAssin; else delete o.assinatura;
         }
         toast("OS " + num(o.id) + " atualizada ✔");
@@ -2140,17 +2160,37 @@ function salvarOS(ev) {
                 });
             }
             toast("OS " + num(nova.id) + " enviada para " + nomeDe(nova.tecId) + " ✔");
+            // avisa o técnico na hora (antes ele só descobria entrando na lista)
+            if (nova.tecId !== sessao) {
+                avisos.push({ id: Date.now() + "_t" + nova.tecId, para: nova.tecId, osId: nova.id, em: Date.now(),
+                              t: "Nova OS para você", s: num(nova.id) + " · " + nova.titulo });
+            }
         } else {
             nova.origem = "campo";
             nova.tecId = sessao;
             nova.prior = "media";
-            nova.status = "final";
-            nova.concluida = base.data || hoje();
-            nova.concluidaHora = horaAgora();
+            // O técnico escolhe: abrir a OS em andamento (e finalizar depois) ou
+            // registrar o serviço como já concluído.
+            var abrirAgora = !!($("fAndamento") && $("fAndamento").checked);
+            nova.status = abrirAgora ? "andamento" : "final";
+            nova.aberta = hoje();
+            nova.abertaHora = horaAgora();
+            if (abrirAgora) {
+                nova.data = hoje();   // início do serviço (a conclusão só entra ao finalizar)
+            } else {
+                nova.concluida = base.data || hoje();
+                nova.concluidaHora = horaAgora();
+            }
             nova.fotos = { antes: formFotos.antes.slice(), depois: formFotos.depois.slice() };
             nova.itens = formItens.slice();
             if (formAssin) nova.assinatura = formAssin;
-            toast("Serviço registrado ✔");
+            // avisa o líder (é ele quem vê a OS do técnico na tela inicial dele)
+            usuarios.filter(function (u) { return u.papel === "admin"; }).forEach(function (l) {
+                avisos.push({ id: Date.now() + "_" + l.id, para: l.id, osId: nova.id, em: Date.now(),
+                              t: nomeDe(sessao) + (abrirAgora ? " abriu a OS " : " registrou a OS ") + num(nova.id),
+                              s: nova.titulo + " · " + nova.setor });
+            });
+            toast(abrirAgora ? "OS " + num(nova.id) + " aberta e em andamento ✔" : "Serviço registrado ✔");
         }
         ordens.push(nova);
     }
@@ -2171,7 +2211,7 @@ function abrirOS(id) {
     var adm = ehAdmin();
     var souEu = !adm && o.tecId === sessao;
     var p = PRIOR[o.prior], s = STAT[o.status];
-    var podeFoto = souEu && (o.origem === "campo" || o.status === "andamento");
+    var podeFoto = souEu && (o.status === "andamento" || (o.origem === "campo" && o.status === "final"));
     var nome = esc(nomeDe(o.tecId));
 
     var h = '<div class="sheet-alca"></div>' +
@@ -2246,7 +2286,7 @@ function abrirOS(id) {
         }
     }
 
-    var sigEditavel = souEu && (o.origem === "campo" || o.status !== "aguardando");
+    var sigEditavel = souEu && (o.status === "andamento" || (o.origem === "campo" && o.status === "final"));
     if (sigEditavel) {
         h += '<h4>✍️ Assinatura do técnico</h4>' +
              '<canvas id="sigSheet" class="sig-pad"></canvas>' +
@@ -2278,7 +2318,16 @@ function abrirOS(id) {
             h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar OS</button></div>';
         }
     } else if (souEu) {
-        h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar relatório</button></div>';
+        // OS registrada pelo próprio técnico (origem "campo")
+        if (o.status === "andamento") {
+            h += '<p class="dica" style="margin:0 0 10px">Esta OS está <b>em andamento</b>. Você pode voltar aqui e incluir fotos e materiais antes de terminar.</p>' +
+                 '<div class="sheet-acoes"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar OS</button>' +
+                 '<button class="btn-pri verde" style="margin-top:0" onclick="finalizarOS(' + o.id + ')"><i class="fa-solid fa-flag-checkered"></i> Finalizar OS</button></div>' +
+                 '<div class="sheet-acoes um"><button class="btn-perigo" onclick="excluirOS(' + o.id + ')"><i class="fa-solid fa-trash"></i> Excluir esta OS</button></div>';
+        } else {
+            h += '<div class="sheet-acoes"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar relatório</button>' +
+                 '<button class="btn-perigo" style="margin-top:0" onclick="excluirOS(' + o.id + ')"><i class="fa-solid fa-trash"></i> Excluir</button></div>';
+        }
     }
 
     // O técnico também pode passar a OS para outro técnico (como o líder)
@@ -2937,8 +2986,8 @@ function finalizarOS(id) {
     var rel = $("sRel");
     if (rel) o.rel = rel.value;
     o.status = "final";
-    o.concluida = hoje();
-    o.concluidaHora = horaAgora();
+    if (!o.concluida) o.concluida = hoje();
+    if (!o.concluidaHora) o.concluidaHora = horaAgora();
     delete o.zerada;
     salvar();
     abrirOS(id);
@@ -3666,13 +3715,22 @@ function removerElogio(id) {
 }
 
 function excluirOS(id) {
-    if (!ehAdmin()) return;
     var o = buscar(id);
     if (!o) return;
+    var adm = ehAdmin();
+    if (!adm) {
+        // Técnico: só apaga a OS que ele mesmo abriu (com as próprias mãos neste aparelho/conta)
+        if (o.tecId !== sessao) { toast("Você só pode excluir as suas OS."); return; }
+        if (o.origem !== "campo") { toast("Esta OS foi designada pelo líder: peça a ele para excluir."); return; }
+        if (o.status === "final" && o.assinatura) {
+            toast("Esta OS já foi finalizada com assinatura. Peça ao líder para excluir.");
+            return;
+        }
+    }
     var rel = o.origem === "campo";
     pedirConfirmacao({
-        ic: "fa-trash-can", titulo: rel ? "Excluir relatório?" : "Excluir ordem de serviço?",
-        texto: (rel ? 'O relatório' : 'A') + ' <b>OS ' + num(o.id) + '</b> · ' + esc(o.titulo) + ' será apagad' + (rel ? 'o' : 'a') + ', com fotos e materiais. Essa ação não pode ser desfeita.'
+        ic: "fa-trash-can", titulo: rel ? "Excluir esta OS?" : "Excluir ordem de serviço?",
+        texto: 'A <b>OS ' + num(o.id) + '</b> · ' + esc(o.titulo) + ' será apagada, com fotos e materiais. Essa ação não pode ser desfeita.'
     }, function () {
         ordens = ordens.filter(function (x) { return x.id !== Number(id); });
         salvar();
@@ -6363,6 +6421,8 @@ document.querySelectorAll("#segPrior button").forEach(function (b) {
 });
 
 $("fTitulo").addEventListener("input", function () { $("cTitulo").classList.remove("invalido"); });
+// "Abrir esta OS agora": troca o rótulo do botão e os textos do formulário
+if ($("fAndamento")) $("fAndamento").addEventListener("change", function () { rotulosForm(); });
 $("fileFoto").addEventListener("change", aoEscolherFotos);
 $("fileAvatar").addEventListener("change", aoEscolherAvatar);
 $("fileLogo").addEventListener("change", aoEscolherLogo);
@@ -6383,6 +6443,18 @@ document.addEventListener("visibilitychange", function () {
 abrirDB().then(function () {
     return sbCarregar();
 }).then(function (r) {
+    iniciarApp(r);
+}).catch(function (e) {
+    // Se a leitura do servidor falhar de um jeito inesperado (servidor lento,
+    // internet caindo no meio), o app abre assim mesmo com os dados do aparelho.
+    console.warn("Falha ao carregar os dados:", e);
+    sbLocal().then(function (l) {
+        iniciarApp(l);
+    }).catch(function () { iniciarApp([]); });
+});
+
+function iniciarApp(r) {
+    r = r || [];
     ordens = r[0] || null;
     usuarios = r[1] || null;
     setores = r[2] || null;
@@ -6396,6 +6468,21 @@ abrirDB().then(function () {
         dadosIniciais();
     }
     normalizar();
+    // Guarda exatamente o que veio do servidor (mesmo formato do retrato do
+    // supabase.js): assim o envio só manda o que mudou de verdade e consegue
+    // apagar no servidor a OS excluída neste aparelho.
+    if (typeof sbSnap !== "undefined" && typeof sbMapa === "function") {
+        sbSnap.ordens = sbMapa(ordens);
+        sbSnap.usuarios = sbMapa(usuarios);
+        sbSnap.eventos = sbMapa(eventos);
+        sbSnap.avisos = sbMapa(avisos);
+        sbSnap.estoque = sbMapa(estoque);
+        sbSnap.compras = sbMapa(compras);
+        sbSnap.config = {
+            setores: JSON.stringify(setores),
+            empresa: JSON.stringify(empresa)
+        };
+    }
     salvar();
 
     var s = 0;
@@ -6406,4 +6493,4 @@ abrirDB().then(function () {
     } else {
         mostrarLogin();
     }
-});
+}

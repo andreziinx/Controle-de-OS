@@ -107,6 +107,16 @@ function fmtData(s) {
 
 function num(id) { return "#" + String(id).padStart(4, "0"); }
 
+function horaAgora() {
+    var d = new Date();
+    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+// "12/03/2026 às 16:33" (sem hora, mostra só a data: OS antigas não têm hora)
+function fmtDataHoraOS(data, hora) {
+    return fmtData(data) + (hora ? " às " + hora : "");
+}
+
 function toast(msg) {
     var t = $("toast");
     t.textContent = msg;
@@ -2136,6 +2146,7 @@ function salvarOS(ev) {
             nova.prior = "media";
             nova.status = "final";
             nova.concluida = base.data || hoje();
+            nova.concluidaHora = horaAgora();
             nova.fotos = { antes: formFotos.antes.slice(), depois: formFotos.depois.slice() };
             nova.itens = formItens.slice();
             if (formAssin) nova.assinatura = formAssin;
@@ -2210,6 +2221,12 @@ function abrirOS(id) {
     if (mostrarFotos) {
         h += '<h4>📷 Antes do serviço (' + o.fotos.antes.length + ')</h4>' + grupoFotos(o.id, "antes", o.fotos.antes, podeFoto) +
              '<h4>📷 Depois do serviço (' + o.fotos.depois.length + ')</h4>' + grupoFotos(o.id, "depois", o.fotos.depois, podeFoto);
+        // toque na foto para ver, e aqui a explicação de como ela entra no PDF
+        if ((o.fotos.antes.length + o.fotos.depois.length) && podeCompartilharOS(o)) {
+            h += '<p class="dica" style="margin:0 0 10px"><i class="fa-solid fa-circle-info"></i> ' +
+                 'As fotos entram no PDF do botão <b>Compartilhar PDF</b> (mais abaixo). ' +
+                 '<b>Toque na foto</b> e use "Baixar"/"Salvar imagem" para mandar como imagem solta.</p>';
+        }
     }
 
     if (mostrarFotos) {
@@ -2479,29 +2496,55 @@ function pdfTexto(t) {
     return String(t == null ? "" : t).replace(/[^\u0020-\u00FF\u2013\u2014\u2022\n]/g, "");
 }
 
+// Devolve {data, w, h} com a imagem (base64 ou link) já reduzida para o PDF.
+// Antes de desistir, tenta baixar a foto e ler como base64: se o arquivo veio do
+// cache do service worker, o canvas podia ser bloqueado e a foto sumia do PDF.
 function pdfCarregarImagem(src) {
-    return new Promise(function (resolve) {
-        var img = new Image();
-        var t = setTimeout(function () { resolve(null); }, 8000);
-        img.crossOrigin = "anonymous";
-        img.onload = function () {
-            clearTimeout(t);
-            try {
-                var max = 900, w = img.naturalWidth, h = img.naturalHeight;
-                if (!w || !h) { resolve(null); return; }
-                var k = Math.min(1, max / Math.max(w, h));
-                var c = document.createElement("canvas");
-                c.width = Math.round(w * k);
-                c.height = Math.round(h * k);
-                var cx = c.getContext("2d");
-                cx.fillStyle = "#fff";
-                cx.fillRect(0, 0, c.width, c.height);
-                cx.drawImage(img, 0, 0, c.width, c.height);
-                resolve({ data: c.toDataURL("image/jpeg", 0.75), w: c.width, h: c.height });
-            } catch (e) { resolve(null); }
-        };
-        img.onerror = function () { clearTimeout(t); resolve(null); };
-        img.src = src;
+    function ler(url) {
+        return new Promise(function (resolve) {
+            var img = new Image();
+            var t = setTimeout(function () { resolve(null); }, 8000);
+            img.onload = function () {
+                clearTimeout(t);
+                try {
+                    var max = 900, w = img.naturalWidth, h = img.naturalHeight;
+                    if (!w || !h) { resolve(null); return; }
+                    var k = Math.min(1, max / Math.max(w, h));
+                    var c = document.createElement("canvas");
+                    c.width = Math.round(w * k);
+                    c.height = Math.round(h * k);
+                    var cx = c.getContext("2d");
+                    cx.fillStyle = "#fff";
+                    cx.fillRect(0, 0, c.width, c.height);
+                    cx.drawImage(img, 0, 0, c.width, c.height);
+                    resolve({ data: c.toDataURL("image/jpeg", 0.75), w: c.width, h: c.height });
+                } catch (e) { resolve(null); }
+            };
+            img.onerror = function () { clearTimeout(t); resolve(null); };
+            img.src = url;
+        });
+    }
+
+    function viaFetch() {
+        if (typeof src !== "string" || src.indexOf("data:image") === 0 || !window.fetch) return Promise.resolve(null);
+        return fetch(src).then(function (r) {
+            if (!r || !r.ok) return null;
+            return r.blob();
+        }).then(function (b) {
+            if (!b) return null;
+            return new Promise(function (res) {
+                var fr = new FileReader();
+                fr.onload = function () { res(fr.result); };
+                fr.onerror = function () { res(null); };
+                fr.readAsDataURL(b);
+            });
+        }).then(function (d) {
+            return d ? ler(d) : null;
+        }).catch(function () { return null; });
+    }
+
+    return ler(src).then(function (im) {
+        return im || viaFetch();
     });
 }
 
@@ -2585,7 +2628,7 @@ async function pdfMontarOS(o) {
     async function fotos(rotulo, arr) {
         arr = (arr || []).slice(0, 24);
         if (!arr.length) return;
-        var cw = W / 3, ch = 62, col = 0;
+        var cw = W / 3, ch = 62, col = 0, falhas = 0;
         cabe(ch + 10);
         doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); cor([40, 40, 40]);
         doc.setDrawColor(BORDA[0], BORDA[1], BORDA[2]);
@@ -2602,6 +2645,11 @@ async function pdfMontarOS(o) {
                 var w = mw, h = w * im.h / im.w;
                 if (h > mh) { h = mh; w = h * im.w / im.h; }
                 doc.addImage(im.data, "JPEG", x + (cw - w) / 2, y + (ch - h) / 2, w, h);
+            } else {
+                // nunca sai uma caixa vazia sem explicação
+                falhas++;
+                doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); cor([150, 150, 150]);
+                doc.text("foto nao carregou", x + cw / 2, y + ch / 2, { align: "center" });
             }
             col++;
             if (col === 3) { y += ch; col = 0; }
@@ -2610,6 +2658,7 @@ async function pdfMontarOS(o) {
             for (var k = col; k < 3; k++) doc.rect(LM + k * cw, y, cw, ch);
             y += ch;
         }
+        if (falhas) { pdfFotosFalhas += falhas; y += 2; }
     }
 
     // ---------- Cabeçalho ----------
@@ -2642,8 +2691,12 @@ async function pdfMontarOS(o) {
     linha([["Tipo", o.tipo], ["Prioridade", p ? p.t : ""]]);
     linha([["Técnico", nomeDe(o.tecId)], ["Situação", s ? s.t : ""]]);
     var datas = [];
-    datas.push([o.origem === "campo" ? "Data do serviço" : "Prazo", fmtData(o.data)]);
-    if (o.status === "final") datas.push(["Concluída em", fmtData(o.concluida || o.data)]);
+    if (o.origem === "campo" && o.status === "final") {
+        datas.push(["Data do serviço", fmtDataHoraOS(o.data || o.concluida, o.concluidaHora)]);
+    } else {
+        datas.push([o.origem === "campo" ? "Data do serviço" : "Prazo", fmtData(o.data)]);
+        if (o.status === "final") datas.push(["Concluída em", fmtDataHoraOS(o.concluida || o.data, o.concluidaHora)]);
+    }
     linha(datas);
 
     if (o.desc) { secao("Descrição do problema"); bloco("Descrição", o.desc); }
@@ -2656,6 +2709,7 @@ async function pdfMontarOS(o) {
         }).join("\n"));
     }
 
+    pdfFotosFalhas = 0;
     var temFoto = o.fotos && ((o.fotos.antes || []).length || (o.fotos.depois || []).length);
     if (temFoto) {
         secao("Registro fotográfico");
@@ -2674,7 +2728,7 @@ async function pdfMontarOS(o) {
     doc.text("Data", LM + 2, y + 4);
     doc.text("Assinatura do técnico", LM + W / 2 + 2, y + 4);
     doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); cor([30, 30, 30]);
-    doc.text(pdfTexto(fmtData(o.status === "final" ? (o.concluida || o.data) : hoje())), LM + 2, y + 9);
+    doc.text(pdfTexto(o.status === "final" ? fmtDataHoraOS(o.concluida || o.data, o.concluidaHora) : fmtDataHoraOS(hoje(), horaAgora())), LM + 2, y + 9);
     if (o.assinatura) {
         try {
             var sw = W / 2 - 24, sh = sw / 3;
@@ -2708,12 +2762,16 @@ async function pdfMontarOS(o) {
     return doc;
 }
 
+// quantas fotos não puderam ser carregadas no último PDF gerado
+var pdfFotosFalhas = 0;
+
 async function pdfOS(id) {
     var o = buscar(id);
     if (!o) return;
     if (!podeCompartilharOS(o)) { toast("Você só pode compartilhar as suas OS."); return; }
 
-    toast("Gerando o PDF...");
+    var temFoto = o.fotos && ((o.fotos.antes || []).length || (o.fotos.depois || []).length);
+    toast(temFoto ? "Gerando o PDF com as fotos..." : "Gerando o PDF...");
     var doc;
     try {
         doc = await pdfMontarOS(o);
@@ -2723,6 +2781,11 @@ async function pdfOS(id) {
             ? "Não carregou o gerador de PDF. Conecte à internet e abra o app de novo."
             : "Não foi possível gerar o PDF.");
         return;
+    }
+
+    if (pdfFotosFalhas) {
+        toast(pdfFotosFalhas + (pdfFotosFalhas === 1 ? " foto não carregou" : " fotos não carregaram") +
+            " agora. Abra o PDF de novo com internet para tentar de novo.");
     }
 
     var nomeArq = "OS-" + String(o.id).padStart(4, "0") + ".pdf";
@@ -2739,6 +2802,7 @@ async function pdfOS(id) {
         }
     }
 
+    toast("PDF pronto. Anexe o arquivo na conversa do WhatsApp.");
     // Plano B: baixa o arquivo para anexar no WhatsApp
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
@@ -2865,6 +2929,7 @@ function finalizarOS(id) {
     if (rel) o.rel = rel.value;
     o.status = "final";
     o.concluida = hoje();
+    o.concluidaHora = horaAgora();
     delete o.zerada;
     salvar();
     abrirOS(id);

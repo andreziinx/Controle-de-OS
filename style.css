@@ -759,8 +759,13 @@ a{ cursor:pointer; }
 .os-aviso i{ margin-right:5px; }
 
 .os-rodape{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.os-whats{ display:inline-flex; align-items:center; gap:6px; border:0; border-radius:999px; padding:6px 12px; font:inherit; font-size:12.5px; font-weight:600; color:#fff; background:#25D366; cursor:pointer; }
-.os-whats:active{ filter:brightness(.92); }
+.os-pdf{ display:inline-flex; align-items:center; gap:6px; border:0; border-radius:999px; padding:6px 12px; font:inherit; font-size:12.5px; font-weight:600; color:#fff; background:#E53935; cursor:pointer; }
+.os-pdf:active{ filter:brightness(.92); }
+.sig-pad{ display:block; width:100%; aspect-ratio:3/1; background:#fff; border:1.5px solid #CBD3E0; border-radius:12px; touch-action:none; cursor:crosshair; }
+.sig-img{ display:block; width:100%; max-width:360px; aspect-ratio:3/1; object-fit:contain; background:#fff; border:1.5px solid #E1E6EE; border-radius:12px; }
+.sig-acoes{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:8px; }
+.sig-acoes small{ color:var(--cinza); font-size:12.5px; }
+.sig-acoes .btn-sec{ padding:8px 14px; }
 .os-fotos{ margin-left:auto; font-size:12.5px; color:var(--cinza); }
 .os-fotos i{ margin-right:4px; }
 

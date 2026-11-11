@@ -71,7 +71,7 @@ Roda como site/PWA instalável e sincroniza pelo Supabase.
   de permissão/schema e bucket de fotos ausente, este último uma vez só).
 - Em telas estreitas o topo fica apertado: o `.topo-textos` tem `flex:1` e espremia
   os botões. Por isso nada de ícone extra no meio — só o sino (42x42) e o avatar.
-- Ao publicar mudanças em `supabase.js`, subir `VERSAO` no `sw.js` (atual: v11),
+- Ao publicar mudanças em `supabase.js`, subir `VERSAO` no `sw.js` (atual: v17),
   senão o app instalado continua com o arquivo antigo.
 
 ## Estado do banco (conferido)
@@ -90,3 +90,10 @@ Roda como site/PWA instalável e sincroniza pelo Supabase.
   com ícone genérico (o app funciona normalmente).
 - `supabase.backup-*.js` é a cópia do `supabase.js` anterior à revisão da conexão.
   Pode apagar quando estiver tudo validado em produção.
+
+## Compartilhar OS
+
+- WhatsApp (texto): `compartilharOS`/`resumoOS`; PDF: `pdfOS`/`pdfMontarOS` (jsPDF 2.5.1 via cdnjs, carregado no `index.html`).
+- Quem pode compartilhar: líder em qualquer OS, técnico nas suas (`podeCompartilharOS`), em qualquer status.
+- Botão de compartilhar: só PDF (`pdfOS`); o texto para WhatsApp (`compartilharOS`) ficou sem botão.
+- Assinatura do técnico: campo `assinatura` da OS (JPEG pequeno em base64). Quadro no formulário (`sigForm`, só técnico) e na tela da OS (`sigSheet`); funções `sigIniciar`/`sigLimpar`. Sai na caixa "Fim do Trabalho" do PDF.

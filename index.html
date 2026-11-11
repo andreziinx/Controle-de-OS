@@ -196,6 +196,16 @@
             <div class="fotos" id="fotosDepoisForm"></div>
         </div>
 
+        <div class="form-card so-tec">
+            <div class="form-titulo"><i class="fa-solid fa-signature"></i> Assinatura do técnico (opcional)</div>
+            <p class="dica" style="margin:0 0 10px">Assine com o dedo no quadro abaixo. A assinatura sai no PDF da OS.</p>
+            <canvas id="sigForm" class="sig-pad"></canvas>
+            <div class="sig-acoes">
+                <small>Assine dentro do quadro</small>
+                <button type="button" class="btn-sec" onclick="sigLimpar('sigForm')"><i class="fa-solid fa-eraser"></i> Limpar</button>
+            </div>
+        </div>
+
         <div class="form-acoes">
             <button type="button" class="btn-sec" onclick="ir('os')">Cancelar</button>
             <button type="submit" class="btn-pri" id="btnSalvar"><i class="fa-solid fa-check"></i> Salvar</button>
@@ -466,6 +476,7 @@
     <div class="rel-folha" id="relFolha"></div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="supabase.js"></script>
 <script src="script.js"></script>

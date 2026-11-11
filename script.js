@@ -50,6 +50,7 @@ var calMes = new Date();
 calMes.setDate(1);
 var calSel = hoje();
 var formFotos = { antes: [], depois: [] };
+var formAssin = "";   // assinatura do técnico no formulário (imagem)
 var pickCtx = null;
 var loginSel = null;
 var edId = null;
@@ -1020,7 +1021,7 @@ function htmlOS(o) {
         '<div class="os-rodape">' +
             '<span class="tag ' + s.c + '">' + s.t + '</span>' +
             (podeCompartilharOS(o)
-                ? '<button class="os-whats" onclick="event.stopPropagation(); compartilharOS(' + o.id + ')" aria-label="Compartilhar no WhatsApp"><i class="fa-brands fa-whatsapp"></i> WhatsApp</button>'
+                ? '<button class="os-pdf" onclick="event.stopPropagation(); pdfOS(' + o.id + ')" aria-label="Compartilhar PDF"><i class="fa-solid fa-file-pdf"></i> PDF</button>'
                 : "") +
             ((nFotos || nItens) ? '<span class="os-fotos">' +
                 (nFotos ? '<i class="fa-solid fa-camera"></i>' + nFotos : "") +
@@ -2006,10 +2007,12 @@ function novaOS(d) {
     setPrior("media");
     formFotos = { antes: [], depois: [] };
     formItens = [];
+    formAssin = "";
     renderFormFotos();
     renderFormItens();
     rotulosForm();
     ir("nova");
+    sigIniciar("sigForm", "", function (v) { formAssin = v; });
 }
 
 function podeEditar(o) {
@@ -2042,10 +2045,12 @@ function editarOS(id) {
     setPrior(o.prior);
     formFotos = { antes: o.fotos.antes.slice(), depois: o.fotos.depois.slice() };
     formItens = (o.itens || []).map(function (i) { return JSON.parse(JSON.stringify(i)); });
+    formAssin = o.assinatura || "";
     renderFormFotos();
     renderFormItens();
     rotulosForm();
     ir("nova");
+    sigIniciar("sigForm", formAssin, function (v) { formAssin = v; });
 }
 
 function salvarOS(ev) {
@@ -2091,6 +2096,7 @@ function salvarOS(ev) {
             o.rel = base.desc;
             o.fotos = { antes: formFotos.antes.slice(), depois: formFotos.depois.slice() };
             o.itens = formItens.slice();
+            if (formAssin) o.assinatura = formAssin; else delete o.assinatura;
         } else if (adm) {
             var novoTec = Number($("fTec").value);
             o.prior = $("fPrior").value;
@@ -2102,6 +2108,7 @@ function salvarOS(ev) {
             o.fotos = { antes: formFotos.antes.slice(), depois: formFotos.depois.slice() };
             o.itens = formItens.slice();
             o.concluida = base.data || hoje();
+            if (formAssin) o.assinatura = formAssin; else delete o.assinatura;
         }
         toast("OS " + num(o.id) + " atualizada ✔");
     } else {
@@ -2131,6 +2138,7 @@ function salvarOS(ev) {
             nova.concluida = base.data || hoje();
             nova.fotos = { antes: formFotos.antes.slice(), depois: formFotos.depois.slice() };
             nova.itens = formItens.slice();
+            if (formAssin) nova.assinatura = formAssin;
             toast("Serviço registrado ✔");
         }
         ordens.push(nova);
@@ -2221,6 +2229,16 @@ function abrirOS(id) {
         }
     }
 
+    var sigEditavel = souEu && (o.origem === "campo" || o.status !== "aguardando");
+    if (sigEditavel) {
+        h += '<h4>✍️ Assinatura do técnico</h4>' +
+             '<canvas id="sigSheet" class="sig-pad"></canvas>' +
+             '<div class="sig-acoes"><small>Assine dentro do quadro</small>' +
+             '<button type="button" class="btn-sec" onclick="sigLimpar(\'sigSheet\')"><i class="fa-solid fa-eraser"></i> Limpar</button></div>';
+    } else if (o.assinatura) {
+        h += '<h4>✍️ Assinatura do técnico</h4><img class="sig-img" alt="Assinatura" src="' + o.assinatura + '">';
+    }
+
     h += elogioHTML(o, adm);
 
     if (adm) {
@@ -2251,10 +2269,10 @@ function abrirOS(id) {
         h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="abrirAtribuir(' + o.id + ')"><i class="fa-solid fa-user-group"></i> Atribuir a outro técnico</button></div>';
     }
 
-    // Enviar o resumo da OS para o WhatsApp (líder ou técnico dono da OS)
+    // Compartilhar o PDF da OS (líder ou técnico dono da OS)
     if (podeCompartilharOS(o)) {
-        h += '<div class="sheet-acoes um"><button class="btn-pri verde" onclick="compartilharOS(' + o.id + ')">' +
-             '<i class="fa-brands fa-whatsapp"></i> Compartilhar no WhatsApp</button></div>' +
+        h += '<div class="sheet-acoes um"><button class="btn-pri" onclick="pdfOS(' + o.id + ')">' +
+             '<i class="fa-solid fa-file-pdf"></i> Compartilhar PDF</button></div>' +
              '<div class="sheet-acoes um"><button class="btn-sec" onclick="copiarOS(' + o.id + ')">' +
              '<i class="fa-solid fa-copy"></i> Copiar resumo</button></div>';
     }
@@ -2263,6 +2281,82 @@ function abrirOS(id) {
     $("overlay").classList.add("on");
     $("sheet").classList.add("on");
     document.body.classList.add("folha-aberta");
+    if (sigEditavel) {
+        sigIniciar("sigSheet", o.assinatura || "", function (v) {
+            if (v) o.assinatura = v; else delete o.assinatura;
+            salvar();
+        });
+    }
+}
+
+/* ==========================================
+   ASSINATURA (quadro para assinar com o dedo)
+   Guarda uma imagem pequena (JPEG) no campo "assinatura" da OS.
+========================================== */
+var sigCb = {};
+
+function sigIniciar(id, valor, aoMudar) {
+    var c = $(id);
+    if (!c) return;
+    sigCb[id] = aoMudar;
+    var LW = 600, LH = 200;
+    c.width = LW;
+    c.height = LH;
+    var x = c.getContext("2d");
+    x.fillStyle = "#fff";
+    x.fillRect(0, 0, LW, LH);
+    x.strokeStyle = "#111";
+    x.fillStyle = "#111";
+    x.lineWidth = 3.5;
+    x.lineCap = "round";
+    x.lineJoin = "round";
+    if (valor) {
+        var im = new Image();
+        im.onload = function () { x.drawImage(im, 0, 0, LW, LH); };
+        im.src = valor;
+    }
+
+    var desenhando = false, ult = null;
+    function pos(e) {
+        var r = c.getBoundingClientRect();
+        return { x: (e.clientX - r.left) * LW / r.width, y: (e.clientY - r.top) * LH / r.height };
+    }
+    c.onpointerdown = function (e) {
+        e.preventDefault();
+        desenhando = true;
+        ult = pos(e);
+        try { c.setPointerCapture(e.pointerId); } catch (er) {}
+        x.beginPath();
+        x.arc(ult.x, ult.y, 1.8, 0, Math.PI * 2);
+        x.fill();
+    };
+    c.onpointermove = function (e) {
+        if (!desenhando) return;
+        e.preventDefault();
+        var p = pos(e);
+        x.beginPath();
+        x.moveTo(ult.x, ult.y);
+        x.lineTo(p.x, p.y);
+        x.stroke();
+        ult = p;
+    };
+    function fim() {
+        if (!desenhando) return;
+        desenhando = false;
+        if (sigCb[id]) sigCb[id](c.toDataURL("image/jpeg", 0.85));
+    }
+    c.onpointerup = fim;
+    c.onpointercancel = fim;
+}
+
+function sigLimpar(id) {
+    var c = $(id);
+    if (!c) return;
+    var x = c.getContext("2d");
+    x.fillStyle = "#fff";
+    x.fillRect(0, 0, c.width, c.height);
+    x.fillStyle = "#111";
+    if (sigCb[id]) sigCb[id]("");
 }
 
 function fecharOS() {
@@ -2372,6 +2466,289 @@ function copiarOS(id) {
     copiarTexto(resumoOS(o)).then(function (ok) {
         toast(ok ? "Resumo copiado. Cole na conversa do WhatsApp." : "Não foi possível copiar. Selecione o texto manualmente.");
     });
+}
+
+/* ==========================================
+   PDF DA OS (compartilhar no WhatsApp)
+   Gera o PDF no próprio aparelho (jsPDF) e abre o menu de compartilhar
+   do celular, onde se escolhe o WhatsApp. Sem suporte (computador),
+   o arquivo é baixado.
+========================================== */
+function pdfTexto(t) {
+    // a fonte padrão do PDF não tem emoji nem símbolos fora do Latin-1
+    return String(t == null ? "" : t).replace(/[^\u0020-\u00FF\u2013\u2014\u2022\n]/g, "");
+}
+
+function pdfCarregarImagem(src) {
+    return new Promise(function (resolve) {
+        var img = new Image();
+        var t = setTimeout(function () { resolve(null); }, 8000);
+        img.crossOrigin = "anonymous";
+        img.onload = function () {
+            clearTimeout(t);
+            try {
+                var max = 900, w = img.naturalWidth, h = img.naturalHeight;
+                if (!w || !h) { resolve(null); return; }
+                var k = Math.min(1, max / Math.max(w, h));
+                var c = document.createElement("canvas");
+                c.width = Math.round(w * k);
+                c.height = Math.round(h * k);
+                var cx = c.getContext("2d");
+                cx.fillStyle = "#fff";
+                cx.fillRect(0, 0, c.width, c.height);
+                cx.drawImage(img, 0, 0, c.width, c.height);
+                resolve({ data: c.toDataURL("image/jpeg", 0.75), w: c.width, h: c.height });
+            } catch (e) { resolve(null); }
+        };
+        img.onerror = function () { clearTimeout(t); resolve(null); };
+        img.src = src;
+    });
+}
+
+async function pdfMontarOS(o) {
+    var J = window.jspdf && window.jspdf.jsPDF;
+    if (!J) throw new Error("jspdf");
+
+    var doc = new J({ unit: "mm", format: "a4" });
+    var LM = 12, W = 186, PH = 297, TOPO = 14, FIM = PH - 20;
+    var AZUL = [111, 168, 220], BORDA = [205, 210, 218];
+    var y = TOPO;
+
+    var logo = (empresa && empresa.logo) ? await pdfCarregarImagem(empresa.logo) : null;
+
+    function novaPagina() { doc.addPage(); y = TOPO; }
+    function cabe(h) { if (y + h > FIM) novaPagina(); }
+    function cor(c) { doc.setTextColor(c[0], c[1], c[2]); }
+
+    // Faixa azul de seção
+    function secao(t) {
+        cabe(18);
+        y += 1;
+        doc.setFillColor(AZUL[0], AZUL[1], AZUL[2]);
+        doc.rect(LM, y, W, 8, "F");
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10.5);
+        cor([20, 20, 20]);
+        doc.text(pdfTexto(t), LM + 2, y + 5.4);
+        y += 8;
+    }
+
+    // Linha de campos curtos em colunas (cada par: [rótulo, valor])
+    function linha(pares) {
+        var n = pares.length, cw = W / n, alt = 0, i;
+        doc.setFontSize(9.5);
+        var blocos = pares.map(function (p) {
+            doc.setFont("helvetica", "normal");
+            var ls = doc.splitTextToSize(pdfTexto(p[1] || ""), cw - 4);
+            return ls;
+        });
+        blocos.forEach(function (ls) { alt = Math.max(alt, 9 + Math.max(1, ls.length) * 4.2); });
+        cabe(alt);
+        doc.setDrawColor(BORDA[0], BORDA[1], BORDA[2]);
+        for (i = 0; i < n; i++) {
+            var x = LM + i * cw;
+            doc.rect(x, y, cw, alt);
+            doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); cor([40, 40, 40]);
+            doc.text(pdfTexto(pares[i][0]), x + 2, y + 4);
+            doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); cor([30, 30, 30]);
+            blocos[i].forEach(function (l, k) { doc.text(l, x + 2, y + 8.5 + k * 4.2); });
+        }
+        y += alt;
+    }
+
+    // Campo de texto longo (largura total), pode continuar na página seguinte
+    function bloco(rotulo, texto) {
+        doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
+        var ls = doc.splitTextToSize(pdfTexto(texto || "—"), W - 4);
+        var i = 0, primeiro = true;
+        doc.setDrawColor(BORDA[0], BORDA[1], BORDA[2]);
+        while (i < ls.length) {
+            cabe(primeiro ? 16 : 10);
+            var topo = primeiro ? 8.5 : 3.5;
+            var maxL = Math.max(1, Math.floor((FIM - y - topo - 2) / 4.2));
+            var parte = ls.slice(i, i + maxL);
+            var alt = topo + parte.length * 4.2 + 2;
+            doc.rect(LM, y, W, alt);
+            if (primeiro && rotulo) {
+                doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); cor([40, 40, 40]);
+                doc.text(pdfTexto(rotulo), LM + 2, y + 4);
+            }
+            doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); cor([30, 30, 30]);
+            parte.forEach(function (l, k) { doc.text(l, LM + 2, y + topo + 3 + k * 4.2 - 1.2); });
+            y += alt;
+            i += parte.length;
+            primeiro = false;
+        }
+    }
+
+    // Grade de fotos (3 por linha), cada uma dentro de uma caixa com borda
+    async function fotos(rotulo, arr) {
+        arr = (arr || []).slice(0, 24);
+        if (!arr.length) return;
+        var cw = W / 3, ch = 62, col = 0;
+        cabe(ch + 10);
+        doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); cor([40, 40, 40]);
+        doc.setDrawColor(BORDA[0], BORDA[1], BORDA[2]);
+        doc.rect(LM, y, W, 6);
+        doc.text(pdfTexto(rotulo + " (" + arr.length + ")"), LM + 2, y + 4);
+        y += 6;
+        for (var i = 0; i < arr.length; i++) {
+            var im = await pdfCarregarImagem(arr[i]);
+            if (col === 0) cabe(ch);
+            var x = LM + col * cw;
+            doc.rect(x, y, cw, ch);
+            if (im) {
+                var mw = cw - 4, mh = ch - 4;
+                var w = mw, h = w * im.h / im.w;
+                if (h > mh) { h = mh; w = h * im.w / im.h; }
+                doc.addImage(im.data, "JPEG", x + (cw - w) / 2, y + (ch - h) / 2, w, h);
+            }
+            col++;
+            if (col === 3) { y += ch; col = 0; }
+        }
+        if (col > 0) {
+            for (var k = col; k < 3; k++) doc.rect(LM + k * cw, y, cw, ch);
+            y += ch;
+        }
+    }
+
+    // ---------- Cabeçalho ----------
+    var nomeEmp = (empresa && empresa.nome) ? empresa.nome : "Controle de Manutenção";
+    if (logo) {
+        var lh = 20, lw = lh * logo.w / logo.h;
+        if (lw > 40) { lw = 40; lh = lw * logo.h / logo.w; }
+        doc.addImage(logo.data, "JPEG", LM, y, lw, lh);
+    }
+    doc.setFont("helvetica", "normal"); doc.setFontSize(17); cor([30, 30, 30]);
+    var tit = doc.splitTextToSize(pdfTexto("Ordem de Serviço - " + (o.titulo || "")), 110);
+    tit.slice(0, 3).forEach(function (l, k) { doc.text(l, 105, y + 8 + k * 7, { align: "center" }); });
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15); cor([70, 110, 160]);
+    doc.text(pdfTexto("OS " + num(o.id)), LM + W, y + 8, { align: "right" });
+    y += 26;
+
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9); cor([60, 60, 60]);
+    doc.text(pdfTexto("Por: " + nomeDe(o.tecId)), LM, y);
+    doc.text(pdfTexto("Em: " + fmtData(o.criada || hoje())), LM + W, y, { align: "right" });
+    y += 5;
+
+    var p = PRIOR[o.prior], s = STAT[o.status];
+
+    // ---------- Seções ----------
+    secao("Empresa responsável");
+    linha([["Nome", nomeEmp]]);
+
+    secao("Ordem de serviço");
+    linha([["Serviço", o.titulo], ["Setor", o.setor]]);
+    linha([["Tipo", o.tipo], ["Prioridade", p ? p.t : ""]]);
+    linha([["Técnico", nomeDe(o.tecId)], ["Situação", s ? s.t : ""]]);
+    var datas = [];
+    datas.push([o.origem === "campo" ? "Data do serviço" : "Prazo", fmtData(o.data)]);
+    if (o.status === "final") datas.push(["Concluída em", fmtData(o.concluida || o.data)]);
+    linha(datas);
+
+    if (o.desc) { secao("Descrição do problema"); bloco("Descrição", o.desc); }
+    if (o.rel) { secao("Solução / Relatório do serviço"); bloco("Serviços realizados", o.rel); }
+
+    if (o.itens && o.itens.length) {
+        secao("Peças / Materiais");
+        bloco("Materiais utilizados", o.itens.map(function (it) {
+            return "- " + nomeItem(it) + " - " + fmtQtd(it.qtd) + " " + (it.un || "un");
+        }).join("\n"));
+    }
+
+    var temFoto = o.fotos && ((o.fotos.antes || []).length || (o.fotos.depois || []).length);
+    if (temFoto) {
+        secao("Registro fotográfico");
+        await fotos("Antes do serviço", o.fotos.antes);
+        await fotos("Depois do serviço", o.fotos.depois);
+    }
+
+    // ---------- Fim do trabalho ----------
+    secao("Fim do Trabalho");
+    cabe(30);
+    doc.setDrawColor(BORDA[0], BORDA[1], BORDA[2]);
+    var h1 = 26;
+    doc.rect(LM, y, W / 2, h1);
+    doc.rect(LM + W / 2, y, W / 2, h1);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); cor([40, 40, 40]);
+    doc.text("Data", LM + 2, y + 4);
+    doc.text("Assinatura do técnico", LM + W / 2 + 2, y + 4);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); cor([30, 30, 30]);
+    doc.text(pdfTexto(fmtData(o.status === "final" ? (o.concluida || o.data) : hoje())), LM + 2, y + 9);
+    if (o.assinatura) {
+        try {
+            var sw = W / 2 - 24, sh = sw / 3;
+            if (sh > 15) { sh = 15; sw = sh * 3; }
+            doc.addImage(o.assinatura, "JPEG", LM + W * 0.75 - sw / 2, y + 18.5 - sh, sw, sh);
+        } catch (e) {}
+    }
+    doc.setDrawColor(120, 120, 120);
+    doc.line(LM + W / 2 + 10, y + 19, LM + W - 10, y + 19);
+    doc.setFontSize(8.5); cor([90, 90, 90]);
+    doc.text(pdfTexto(nomeDe(o.tecId)), LM + W * 0.75, y + 23, { align: "center" });
+    y += h1;
+
+    // ---------- Rodapé em todas as páginas ----------
+    var n = doc.getNumberOfPages();
+    for (var pg = 1; pg <= n; pg++) {
+        doc.setPage(pg);
+        doc.setDrawColor(190, 190, 190);
+        doc.line(LM, PH - 17, LM + W, PH - 17);
+        if (logo) {
+            var fh = 11, fw = fh * logo.w / logo.h;
+            if (fw > 28) { fw = 28; fh = fw * logo.h / logo.w; }
+            doc.addImage(logo.data, "JPEG", LM, PH - 15.5, fw, fh);
+        } else {
+            doc.setFont("helvetica", "bold"); doc.setFontSize(9); cor([90, 90, 90]);
+            doc.text(pdfTexto(nomeEmp), LM, PH - 10);
+        }
+        doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); cor([130, 130, 130]);
+        doc.text("Gerado em " + fmtData(hoje()) + " - página " + pg + " de " + n, LM + W, PH - 10, { align: "right" });
+    }
+    return doc;
+}
+
+async function pdfOS(id) {
+    var o = buscar(id);
+    if (!o) return;
+    if (!podeCompartilharOS(o)) { toast("Você só pode compartilhar as suas OS."); return; }
+
+    toast("Gerando o PDF...");
+    var doc;
+    try {
+        doc = await pdfMontarOS(o);
+    } catch (e) {
+        console.error("PDF:", e);
+        toast(e && e.message === "jspdf"
+            ? "Não carregou o gerador de PDF. Conecte à internet e abra o app de novo."
+            : "Não foi possível gerar o PDF.");
+        return;
+    }
+
+    var nomeArq = "OS-" + String(o.id).padStart(4, "0") + ".pdf";
+    var blob = doc.output("blob");
+    var arquivo = null;
+    try { arquivo = new File([blob], nomeArq, { type: "application/pdf" }); } catch (e) {}
+
+    if (arquivo && navigator.canShare && navigator.canShare({ files: [arquivo] })) {
+        try {
+            await navigator.share({ files: [arquivo], title: "OS " + num(o.id) });
+            return;
+        } catch (e) {
+            if (e && e.name === "AbortError") return;   // a pessoa fechou o menu
+        }
+    }
+
+    // Plano B: baixa o arquivo para anexar no WhatsApp
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = nomeArq;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+    toast("PDF baixado. Anexe na conversa do WhatsApp.");
 }
 
 function copiarTexto(t) {

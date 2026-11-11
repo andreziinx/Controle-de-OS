@@ -2496,55 +2496,64 @@ function pdfTexto(t) {
     return String(t == null ? "" : t).replace(/[^\u0020-\u00FF\u2013\u2014\u2022\n]/g, "");
 }
 
-// Devolve {data, w, h} com a imagem (base64 ou link) já reduzida para o PDF.
-// Antes de desistir, tenta baixar a foto e ler como base64: se o arquivo veio do
-// cache do service worker, o canvas podia ser bloqueado e a foto sumia do PDF.
-function pdfCarregarImagem(src) {
-    function ler(url) {
-        return new Promise(function (resolve) {
-            var img = new Image();
-            var t = setTimeout(function () { resolve(null); }, 8000);
-            img.onload = function () {
-                clearTimeout(t);
-                try {
-                    var max = 900, w = img.naturalWidth, h = img.naturalHeight;
-                    if (!w || !h) { resolve(null); return; }
-                    var k = Math.min(1, max / Math.max(w, h));
-                    var c = document.createElement("canvas");
-                    c.width = Math.round(w * k);
-                    c.height = Math.round(h * k);
-                    var cx = c.getContext("2d");
-                    cx.fillStyle = "#fff";
-                    cx.fillRect(0, 0, c.width, c.height);
-                    cx.drawImage(img, 0, 0, c.width, c.height);
-                    resolve({ data: c.toDataURL("image/jpeg", 0.75), w: c.width, h: c.height });
-                } catch (e) { resolve(null); }
-            };
-            img.onerror = function () { clearTimeout(t); resolve(null); };
-            img.src = url;
+// Devolve {data, w, h} com a imagem já reduzida para entrar no PDF.
+// A foto pode estar como base64 (base64 é o formato em que ela é gravada) ou como
+// link do Supabase. Neste caso o app baixa a foto e a lê como base64 antes de
+// desenhar: um <img> apontando direto para o link pode não deixar o canvas ler a
+// imagem (o PDF saía com a caixa vazia, sem aviso nenhum).
+function pdfDesenhar(img) {
+    try {
+        var max = 900, w = img.naturalWidth, h = img.naturalHeight;
+        if (!w || !h) return null;
+        var k = Math.min(1, max / Math.max(w, h));
+        var c = document.createElement("canvas");
+        c.width = Math.round(w * k);
+        c.height = Math.round(h * k);
+        var cx = c.getContext("2d");
+        cx.fillStyle = "#fff";
+        cx.fillRect(0, 0, c.width, c.height);
+        cx.drawImage(img, 0, 0, c.width, c.height);
+        return { data: c.toDataURL("image/jpeg", 0.75), w: c.width, h: c.height };
+    } catch (e) {
+        return null;      // canvas bloqueado (imagem "suja")
+    }
+}
+
+function pdfImagemDe(url) {
+    return new Promise(function (resolve) {
+        var img = new Image();
+        var t = setTimeout(function () { resolve(null); }, 8000);
+        img.onload = function () { clearTimeout(t); resolve(pdfDesenhar(img)); };
+        img.onerror = function () { clearTimeout(t); resolve(null); };
+        img.src = url;
+    });
+}
+
+function pdfFotoBase64(link) {
+    if (!window.fetch) return Promise.resolve(null);
+    return fetch(link, { cache: "no-store" }).then(function (r) {
+        if (!r || !r.ok) return null;
+        return r.blob();
+    }).then(function (b) {
+        if (!b) return null;
+        return new Promise(function (res) {
+            var fr = new FileReader();
+            fr.onload = function () { res(fr.result); };
+            fr.onerror = function () { res(null); };
+            fr.readAsDataURL(b);
         });
-    }
+    }).then(function (d) {
+        if (typeof d !== "string" || d.indexOf("data:image") !== 0) return null;
+        return pdfImagemDe(d);
+    }).catch(function () { return null; });
+}
 
-    function viaFetch() {
-        if (typeof src !== "string" || src.indexOf("data:image") === 0 || !window.fetch) return Promise.resolve(null);
-        return fetch(src).then(function (r) {
-            if (!r || !r.ok) return null;
-            return r.blob();
-        }).then(function (b) {
-            if (!b) return null;
-            return new Promise(function (res) {
-                var fr = new FileReader();
-                fr.onload = function () { res(fr.result); };
-                fr.onerror = function () { res(null); };
-                fr.readAsDataURL(b);
-            });
-        }).then(function (d) {
-            return d ? ler(d) : null;
-        }).catch(function () { return null; });
-    }
-
-    return ler(src).then(function (im) {
-        return im || viaFetch();
+function pdfCarregarImagem(src) {
+    if (typeof src !== "string" || !src) return Promise.resolve(null);
+    if (src.indexOf("data:image") === 0) return pdfImagemDe(src);
+    // link do servidor: baixa primeiro (caminho mais confiável no celular)
+    return pdfFotoBase64(src).then(function (im) {
+        return im || pdfImagemDe(src);
     });
 }
 

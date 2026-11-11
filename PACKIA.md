@@ -72,7 +72,7 @@ Roda como site/PWA instalável e sincroniza pelo Supabase.
 - Em telas estreitas o topo fica apertado: o `.topo-textos` tem `flex:1` e espremia
   os botões. Por isso nada de ícone extra no meio — só o sino (42x42) e o avatar.
 - Ao publicar mudanças em `supabase.js` (ou em qualquer arquivo em cache), subir
-  `VERSAO` no `sw.js` (atual: v19), senão o app instalado continua com o arquivo antigo.
+  `VERSAO` no `sw.js` (atual: v20), senão o app instalado continua com o arquivo antigo.
 
 ## Estado do banco (conferido)
 
@@ -99,8 +99,12 @@ Roda como site/PWA instalável e sincroniza pelo Supabase.
 - Assinatura do técnico: campo `assinatura` da OS (JPEG pequeno em base64). Quadro no formulário (`sigForm`, só técnico) e na tela da OS (`sigSheet`); funções `sigIniciar`/`sigLimpar`. Sai na caixa "Fim do Trabalho" do PDF.
 - Fotos no PDF (celular): `pdfCarregarImagem` tentava desenhar a foto no canvas e, se o
   navegador bloqueasse (arquivo vindo do cache do service worker ou foto ainda não baixada),
-  entrava uma caixa vazia sem avisar. Agora, quando falha, tenta de novo baixando a foto e
-  lendo como base64 (`viaFetch`); se ainda assim falhar, a caixa mostra "foto nao carregou"
-  e um aviso (`toast`) conta quantas ficaram fora. A tela da OS avisa que as fotos vão no
-  botão **Compartilhar PDF** (e que tocar na foto serve para salvar a imagem solta).
+  entrava uma caixa vazia sem avisar. Agora **toda foto que é link é baixada e lida como
+  base64** (`pdfFotoBase64`, fetch com `cache: "no-store"`) antes de ser desenhada; só depois
+  tenta o link direto. Se ainda falhar, a caixa mostra "foto nao carregou" e um aviso
+  (`toast`) conta quantas ficaram fora. Era o caso do celular: o link do Supabase desenhava
+  no canvas, mas o `toDataURL` estourava ("Tainted canvases may not be exported") em silêncio
+  e o PDF saía sem as fotos. A tela da OS avisa que as fotos vão no botão **Compartilhar PDF**.
+- Bibliotecas de fora (jsPDF e supabase-js) no `index.html` usam `defer`: se uma delas
+  demorar ou falhar, o `script.js` roda do mesmo jeito (antes um erro ali parava tudo).
 - Hora da OS: campo `concluidaHora` ("HH:MM"), gravado ao finalizar (`finalizarOS`) e ao registrar serviço de campo. OS antigas não têm hora; o PDF mostra só a data nelas (`fmtDataHoraOS`).

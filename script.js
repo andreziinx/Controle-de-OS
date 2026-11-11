@@ -66,6 +66,13 @@ function esc(s) {
         .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// Texto sem acentos e em minúsculas: a busca do estoque acha "valvula" e "válvula"
+function semAcento(s) {
+    var t = String(s == null ? "" : s).toLowerCase();
+    try { t = t.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); } catch (e) {}
+    return t;
+}
+
 function iso(d) {
     var m = d.getMonth() + 1, dia = d.getDate();
     return d.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (dia < 10 ? "0" : "") + dia;
@@ -1012,6 +1019,9 @@ function htmlOS(o) {
         aviso +
         '<div class="os-rodape">' +
             '<span class="tag ' + s.c + '">' + s.t + '</span>' +
+            (o.status === "final"
+                ? '<button class="os-whats" onclick="event.stopPropagation(); compartilharOS(' + o.id + ')" aria-label="Compartilhar no WhatsApp"><i class="fa-brands fa-whatsapp"></i> WhatsApp</button>'
+                : "") +
             ((nFotos || nItens) ? '<span class="os-fotos">' +
                 (nFotos ? '<i class="fa-solid fa-camera"></i>' + nFotos : "") +
                 (nItens ? '<i class="fa-solid fa-box-open" style="margin-left:' + (nFotos ? 10 : 0) + 'px"></i>' + nItens : "") +
@@ -1437,11 +1447,14 @@ function renderMenuPerfil() {
 function renderSub() {
     if (viewAtual === "p-compras") { renderCompras(); return; }
     if (viewAtual === "p-peca")    { renderPeca(); return; }
+    // O estoque é de leitura para todos (o técnico precisa pesquisar peças e
+    // locais). Antes, esta função parava em `if (!ehAdmin()) return;` e o técnico
+    // abria a tela de Estoque vazia, achando que o líder não havia cadastrado nada.
+    if (viewAtual === "p-estoque") { renderEstoque(); return; }
     if (!ehAdmin()) return;
     if (viewAtual === "p-equipe")  renderEquipe();
     if (viewAtual === "p-empresa") renderEmpresa();
     if (viewAtual === "p-setores") renderSetoresPerfil();
-    if (viewAtual === "p-estoque") renderEstoque();
 }
 
 function renderPerfil() {
@@ -1476,6 +1489,16 @@ function renderPerfil() {
             st(m.length, "Minhas OS", "filtrarOS('todas', true)", "fa-clipboard-list") +
             st(m.filter(function (o) { return o.status === "final"; }).length, "Concluídas", "filtrarOS('final', true)", "fa-circle-check") +
             st(m.filter(atrasada).length, "Atrasadas", "filtrarOS('atrasadas', true)", "fa-triangle-exclamation");
+        // O técnico também precisa ver quantos materiais existem no estoque
+        if ($("mcEstoque")) {
+            var baixos = estoque.filter(estBaixo).length, zer = estoque.filter(estSaldoZero).length;
+            $("mcEstoque").textContent = estoque.length
+                ? estoque.length + (estoque.length === 1 ? " material" : " materiais") +
+                  (baixos ? " · " + baixos + " abaixo do mínimo" : "") +
+                  (zer ? " · " + zer + (zer === 1 ? " zerado" : " zerados") : "")
+                : "Consulte peças, saldos e onde encontrar";
+            $("mcEstoque").classList.toggle("alerta", baixos + zer > 0);
+        }
     }
 }
 
@@ -2228,6 +2251,14 @@ function abrirOS(id) {
         h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="abrirAtribuir(' + o.id + ')"><i class="fa-solid fa-user-group"></i> Atribuir a outro técnico</button></div>';
     }
 
+    // OS finalizada: enviar o resumo para o WhatsApp (cliente, líder ou grupo)
+    if (o.status === "final") {
+        h += '<div class="sheet-acoes um"><button class="btn-pri verde" onclick="compartilharOS(' + o.id + ')">' +
+             '<i class="fa-brands fa-whatsapp"></i> Compartilhar no WhatsApp</button></div>' +
+             '<div class="sheet-acoes um"><button class="btn-sec" onclick="copiarOS(' + o.id + ')">' +
+             '<i class="fa-solid fa-copy"></i> Copiar resumo</button></div>';
+    }
+
     $("sheet").innerHTML = h;
     $("overlay").classList.add("on");
     $("sheet").classList.add("on");
@@ -2238,6 +2269,126 @@ function fecharOS() {
     $("overlay").classList.remove("on");
     $("sheet").classList.remove("on");
     document.body.classList.remove("folha-aberta");
+}
+
+/* ==========================================
+   COMPARTILHAR OS FINALIZADA NO WHATSAPP
+   Monta um resumo em texto (sem HTML) e abre o WhatsApp já com a mensagem.
+   Se o app não conseguir abrir sozinho (celular bloqueando), o resumo fica
+   copiado para a área de transferência e o usuário cola onde quiser.
+========================================== */
+function resumoOS(o) {
+    var L = [];
+    var tituloApp = (empresa && empresa.nome) ? empresa.nome : "Controle de Manutenção";
+    L.push("*" + tituloApp + "*");
+    L.push("*OS " + num(o.id) + " — Serviço concluído*");
+    L.push("");
+    L.push("*Serviço:* " + (o.titulo || "—"));
+    L.push("*Setor:* " + (o.setor || "—"));
+    L.push("*Tipo:* " + (o.tipo || "—"));
+    L.push("*Técnico:* " + nomeDe(o.tecId));
+
+    var dataServico = (o.origem === "campo" ? o.data : (o.concluida || o.data));
+    if (dataServico) L.push("*Data:* " + fmtData(dataServico));
+
+    if (o.desc) { L.push(""); L.push("*Descrição:*"); L.push(o.desc); }
+    if (o.rel) { L.push(""); L.push("*Relatório do serviço:*"); L.push(o.rel); }
+
+    if (o.itens && o.itens.length) {
+        L.push("");
+        L.push("*Materiais utilizados:*");
+        o.itens.forEach(function (it) {
+            L.push("• " + nomeItem(it) + " — " + fmtQtd(it.qtd) + " " + (it.un || "un"));
+        });
+    }
+
+    // Fotos: manda o link das que já estão no servidor (Supabase Storage).
+    // Foto ainda só neste aparelho (base64) não tem endereço: entra só na contagem.
+    var fAntes = (o.fotos && o.fotos.antes) || [];
+    var fDepois = (o.fotos && o.fotos.depois) || [];
+    function soLinks(arr) {
+        return arr.filter(function (f) { return typeof f === "string" && f.indexOf("http") === 0; });
+    }
+    var lkAntes = soLinks(fAntes), lkDepois = soLinks(fDepois);
+    var semLink = (fAntes.length - lkAntes.length) + (fDepois.length - lkDepois.length);
+    var MAX_LINKS = 6;   // por grupo: evita estourar o limite de tamanho da mensagem
+
+    function blocoFotos(titulo, links) {
+        if (!links.length) return;
+        L.push("");
+        L.push("*" + titulo + " (" + links.length + "):*");
+        links.slice(0, MAX_LINKS).forEach(function (u, i) { L.push((i + 1) + ". " + u); });
+        if (links.length > MAX_LINKS) L.push("+ " + (links.length - MAX_LINKS) + " foto(s) no app");
+    }
+    blocoFotos("Fotos antes", lkAntes);
+    blocoFotos("Fotos depois", lkDepois);
+    if (semLink) {
+        L.push("");
+        L.push("_" + semLink + (semLink === 1 ? " foto ainda não foi enviada ao servidor e não tem link." : " fotos ainda não foram enviadas ao servidor e não têm link.") + "_");
+    }
+
+    L.push("");
+    L.push("_Enviado pelo app de manutenção em " + fmtData(hoje()) + "_");
+    return L.join("\n");
+}
+
+function compartilharOS(id) {
+    var o = buscar(id);
+    if (!o) return;
+    if (o.status !== "final") { toast("Compartilhe apenas as OS finalizadas."); return; }
+
+    var texto = resumoOS(o);
+
+    // whatsapp:// funciona melhor no celular; wa.me é o plano B (computador)
+    var urlApp = "whatsapp://send?text=" + encodeURIComponent(texto);
+    var urlWeb = "https://wa.me/?text=" + encodeURIComponent(texto);
+
+    try {
+        // copia antes de sair do app: se o WhatsApp não abrir, a mensagem não se perde
+        copiarTexto(texto);
+        window.location.href = urlApp;
+        setTimeout(function () {
+            if (!document.hidden) {
+                window.open(urlWeb, "_blank");
+                toast("Resumo copiado. Se o WhatsApp não abrir, cole na conversa.");
+            }
+        }, 1200);
+    } catch (e) {
+        window.open(urlWeb, "_blank");
+    }
+}
+
+function copiarOS(id) {
+    var o = buscar(id);
+    if (!o) return;
+    copiarTexto(resumoOS(o)).then(function (ok) {
+        toast(ok ? "Resumo copiado. Cole na conversa do WhatsApp." : "Não foi possível copiar. Selecione o texto manualmente.");
+    });
+}
+
+function copiarTexto(t) {
+    // navigator.clipboard só existe em https/localhost; o plano B usa textarea
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(t).then(function () { return true; }).catch(function () { return copiarTextoAntigo(t); });
+    }
+    return Promise.resolve(copiarTextoAntigo(t));
+}
+
+function copiarTextoAntigo(t) {
+    try {
+        var a = document.createElement("textarea");
+        a.value = t;
+        a.setAttribute("readonly", "");
+        a.style.position = "fixed";
+        a.style.top = "-1000px";
+        document.body.appendChild(a);
+        a.select();
+        var ok = document.execCommand("copy");
+        document.body.removeChild(a);
+        return ok;
+    } catch (e) {
+        return false;
+    }
 }
 
 function setRel(id, v) {
@@ -3223,7 +3374,9 @@ function renderEstoque() {
         return '<div class="' + (estFiltro === f ? "on " : "") + (alerta && n ? "alerta" : "") + '" onclick="setEstFiltro(\'' + f + '\')"><b>' + n + '</b><small>' + rot + '</small></div>';
     }
     $("estResumo").innerHTML = card("todos", estoque.length, "Materiais cadastrados", false) +
-        card("baixo", nb, "Abaixo do mínimo", true) + card("zerado", nz, "Estoque zerado", true);
+        (ehAdmin()
+            ? card("baixo", nb, "Abaixo do mínimo", true) + card("zerado", nz, "Estoque zerado", true)
+            : card("zerado", nz, "Estoque zerado", true));
 
     renderChipsEstoque();
 
@@ -3231,8 +3384,9 @@ function renderEstoque() {
         if (estFiltro === "baixo" && !estBaixo(e)) return false;
         if (estFiltro === "zerado" && !estSaldoZero(e)) return false;
         if (estCat && (e.cat || "") !== estCat) return false;
-        var texto = (e.nome + " " + (e.codigo || "") + " " + (e.cat || "") + " " + (e.desc || "") + " " + (e.caixa || "") + " " + locTexto(e));
-        return !q || texto.toLowerCase().indexOf(q) !== -1;
+        var texto = (e.nome + " " + (e.codigo || "") + " " + (e.cat || "") + " " + (e.desc || "") + " " + (e.caixa || "") + " " + locTexto(e) + " " + locaisDe(e).map(locTexto).join(" "));
+        var alvo = semAcento(texto);
+        return !q || alvo.indexOf(semAcento(q)) !== -1;
     }).sort(porNome);
 
     var nomesF = { baixo: "Abaixo do mínimo", zerado: "Estoque zerado" };

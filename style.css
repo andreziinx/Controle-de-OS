@@ -1249,6 +1249,34 @@ a{ cursor:pointer; }
 .alerta-banner b{ display:block; font-size:15px; }
 .alerta-banner small{ font-size:12.5px; opacity:.92; }
 
+/* Faixa "Atualização disponível": aparece no topo de qualquer tela */
+.aviso-versao{
+    display:flex;
+    align-items:flex-start;
+    gap:12px;
+    background:linear-gradient(135deg,#1565C0,#0D47A1);
+    color:#fff;
+    border-radius:14px;
+    padding:12px 14px;
+    margin:0 0 12px;
+    box-shadow:0 4px 12px rgba(21,101,192,.28);
+}
+.aviso-versao > i{ font-size:20px; }
+.aviso-versao div{ flex:1; min-width:0; }
+.aviso-versao b{ display:block; font-size:14px; }
+.aviso-versao small{ display:block; font-size:12px; opacity:.92; margin-top:2px; }
+.aviso-versao button{
+    margin-top:0 !important;
+    padding:8px 14px;
+    font-size:13px;
+    white-space:nowrap;
+    background:#fff;
+    color:#0D47A1;
+    border:none;
+    border-radius:10px;
+    font-weight:bold;
+}
+
 .notif{
     display:flex;
     align-items:center;

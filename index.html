@@ -80,6 +80,9 @@
 
 <main>
 
+<!-- ============ AVISO DE VERSÃO NOVA (aparece em todas as telas) ============ -->
+<div class="aviso-versao" id="avisoVersao" style="display:none"></div>
+
 <!-- ============ INÍCIO ============ -->
 <section class="view" id="v-inicio">
     <div id="festaBox"></div>
@@ -282,6 +285,7 @@
 
     <div class="menu-perfil">
         <button class="menu-card" onclick="ir('p-estoque')"><span class="mc-ico"><i class="fa-solid fa-boxes-stacked"></i></span><span class="mc-tx"><b>Estoque</b><small id="mcEstoque"></small></span><i class="fa-solid fa-chevron-right mc-seta"></i></button>
+        <button class="menu-card" onclick="abrirStatusApp()"><span class="mc-ico"><i class="fa-solid fa-cloud-arrow-up"></i></span><span class="mc-tx"><b>Atualizações e conexão</b><small id="mcStatusApp"></small></span><i class="fa-solid fa-chevron-right mc-seta"></i></button>
     </div>
 
     <div class="menu-perfil so-admin">
@@ -420,7 +424,7 @@
 
     <div class="form-card">
         <div class="form-titulo"><i class="fa-solid fa-cloud-arrow-up"></i> Conexão com o banco</div>
-        <p class="dica" style="margin:0 0 12px">Confira se os dados estão chegando ao servidor. Se algo não sincronizar, o teste mostra o motivo.</p>
+        <p class="dica" style="margin:0 0 12px">Veja se as OS estão chegando ao servidor. Cada técnico pode ver o estado no próprio perfil, em <b>Atualizações e conexão</b>.</p>
         <button class="btn-sec cheio" onclick="abrirDadosConexao()"><i class="fa-solid fa-plug-circle-check"></i> Ver estado e testar</button>
     </div>
 

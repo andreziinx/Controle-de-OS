@@ -658,11 +658,6 @@ function sbMesclar(srvLista, locLista, antes) {
         pendente = true;
     }
 
-    if (!srv.length && loc.length) {
-        antes = {};
-        pendente = true;
-    }
-
     srv.forEach(function (s) {
         if (!s || s.id == null) return;
         var id = String(s.id), l = locMap[id], a = antes[id];
@@ -684,6 +679,18 @@ function sbMesclar(srvLista, locLista, antes) {
     return { lista: out, pendente: pendente };
 }
 
+/* Quantas OS deste aparelho ainda não chegaram ao servidor (para a tela
+   "Atualizações e conexão"). Compara com o último retrato do servidor. */
+function sbPendentes() {
+    if (typeof ordens === "undefined" || !Array.isArray(ordens)) return 0;
+    var n = 0;
+    ordens.forEach(function (o) {
+        if (!o || o.id == null) return;
+        var antes = (sbSnap.ordens && sbSnap.ordens[String(o.id)]) || "";
+        if (!antes || JSON.stringify(o) !== antes) n++;
+    });
+    return n;
+}
 function sbCopiaSnap() {
     var c = { config: Object.assign({}, sbSnap.config || {}) };
     ["ordens", "usuarios", "eventos", "avisos", "estoque", "compras"].forEach(function (t) {

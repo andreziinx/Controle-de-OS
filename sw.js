@@ -35,6 +35,14 @@ self.addEventListener("install", function (e) {
     );
 });
 
+// Responde a pergunta do app: "qual é a versão instalada aqui?"
+self.addEventListener("message", function (e) {
+    if (!e.data || e.data.tipo !== "versao") return;
+    if (e.source) {
+        try { e.source.postMessage({ tipo: "versao", versao: VERSAO }); } catch (err) {}
+    }
+});
+
 self.addEventListener("activate", function (e) {
     e.waitUntil(
         caches.keys().then(function (nomes) {

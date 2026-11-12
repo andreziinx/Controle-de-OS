@@ -613,7 +613,7 @@ function abrirDadosConexao() {
 
     var h = '<div class="sheet-alca"></div><h2>Conexão com o banco</h2>' +
         linha(!semServidor, semServidor ? "Biblioteca do Supabase não carregou" : "Conexão configurada",
-              semServidor ? "Abra o app com internet pelo menos uma vez." : "Endereço e chave do projeto estão preenchidos.") +
+              semServidor ? "Toque em Testar agora: o app tenta baixar a biblioteca por outro endereço." : "Endereço e chave do projeto estão preenchidos.") +
         linha(online, online ? "Servidor alcançável" : "Servidor não alcançado",
               online ? "Os dados deste aparelho estão sincronizados." : "Os dados continuam salvos aqui e serão enviados quando a internet voltar.") +
         linha(estOk, estOk ? "Tabela de estoque" : "Tabela de estoque ausente",

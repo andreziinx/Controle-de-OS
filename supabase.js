@@ -12,7 +12,7 @@
 var SB_URL = "https://llmwmqmkqhwjvilkpseq.supabase.co";
 var SB_KEY = "sb_publishable_7wXP-xiLJJ2H12qD6YN0WQ_keb0PneE";
 var SB_BUCKET = "fotos";
-var SB_VERSAO = 3;   // sobe quando este arquivo mudar (aparece em Dados e backup)
+var SB_VERSAO = 4;   // sobe quando este arquivo mudar (aparece em Dados e backup)
 
 var sb = null;
 var sbOnline = false;
@@ -110,18 +110,33 @@ function sbExtArquivo(tipo) {
     return "bin";
 }
 
+// Base64 -> Blob sem depender de fetch (o fetch com data URL pode falhar no celular)
+function sbDataUrlParaBlob(dataUrl) {
+    var p = String(dataUrl).split(",");
+    var tipo = (/:(.*?);/.exec(p[0]) || [])[1] || "application/octet-stream";
+    var bin = atob(p[1] || "");
+    var u8 = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return new Blob([u8], { type: tipo });
+}
+
 async function sbUpload(dataUrl, pasta) {
-    var resp = await fetch(dataUrl);
-    var blob = await resp.blob();
+    var blob = sbDataUrlParaBlob(dataUrl);
     var ext = blob.type === "image/png" ? "png" : sbExtArquivo(dataUrl);
     var nome = pasta + "/" + Date.now() + "_" + Math.random().toString(36).slice(2, 8) + "." + ext;
-    var r = await sb.storage.from(SB_BUCKET).upload(nome, blob, { contentType: blob.type, cacheControl: "31536000" });
+    // timeout: um envio que nunca responde travava a fila toda (inclusive as OS)
+    var envio = sb.storage.from(SB_BUCKET).upload(nome, blob, { contentType: blob.type, cacheControl: "31536000" });
+    var r = await Promise.race([envio, new Promise(function (res) {
+        setTimeout(function () { res({ error: new Error("tempo esgotado no envio da imagem") }); }, 45000);
+    })]);
     if (r.error) throw r.error;
     return sb.storage.from(SB_BUCKET).getPublicUrl(nome).data.publicUrl;
 }
 
 /* Sobe as imagens que ainda estão em base64 e troca pelo link.
-   Uma foto que falhar não impede as outras: continua valendo no próximo envio. */
+   Uma foto que falhar não impede as outras: continua valendo no próximo envio.
+   IMPORTANTE: esta rotina nunca pode derrubar o envio das OS (antes, um erro
+   aqui — foto pesada, celular sem memória — fazia a OS nova não subir). */
 async function sbSubirImagens() {
     var mudou = false;
 
@@ -134,14 +149,15 @@ async function sbSubirImagens() {
             try {
                 url = await sbUpload(velho, pasta);
             } catch (e) {
-                if (/bucket/i.test(String(e && e.message))) {
+                var msg = String(e && e.message);
+                if (/bucket/i.test(msg)) {
                     if (!sbAvisouBucket) {
                         sbAvisouBucket = true;
                         toast("Não foi possível enviar fotos: " + sbMotivoErro(e));
                     }
                     return;                     // sem bucket, nem tenta as próximas
                 }
-                if (/maximum allowed size|entity too large|payload too large/i.test(String(e && e.message))) {
+                if (/maximum allowed size|entity too large|payload too large/i.test(msg)) {
                     toast(sbMotivoErro(e));     // arquivo grande demais (vídeo): avisa e segue
                 }
                 continue;                       // foto com problema: tenta de novo depois
@@ -151,38 +167,46 @@ async function sbSubirImagens() {
         }
     }
 
-    var os = ordens.slice();
-    for (var a = 0; a < os.length; a++) {
-        if (!os[a] || !os[a].fotos) continue;
-        await trocaLista(os[a].fotos.antes, "os/" + os[a].id);
-        await trocaLista(os[a].fotos.depois, "os/" + os[a].id);
-        if (sbAvisouBucket) break;
-    }
-
-    var us = usuarios.slice();
-    for (var b = 0; b < us.length && !sbAvisouBucket; b++) {
-        if (sbEhDataUrl(us[b].foto)) {
-            var v = us[b].foto;
-            var u = await sbUpload(v, "perfil").catch(function () { return null; });
-            if (u && us[b].foto === v) { us[b].foto = u; mudou = true; }
-            if (!u) break;
+    try {
+        var os = ordens.slice();
+        for (var a = 0; a < os.length; a++) {
+            if (!os[a] || !os[a].fotos) continue;
+            await trocaLista(os[a].fotos.antes, "os/" + os[a].id);
+            await trocaLista(os[a].fotos.depois, "os/" + os[a].id);
+            if (sbAvisouBucket) break;
         }
+    } catch (e) {
+        console.warn("Supabase (fotos das OS):", e);
     }
 
-    var es = estoque.slice();
-    for (var c = 0; c < es.length && !sbAvisouBucket; c++) {
-        if (sbEhDataUrl(es[c].foto)) {
-            var ve = es[c].foto;
-            var ue = await sbUpload(ve, "estoque").catch(function () { return null; });
-            if (ue && es[c].foto === ve) { es[c].foto = ue; mudou = true; }
-            if (!ue) break;
+    try {
+        var us = usuarios.slice();
+        for (var b = 0; b < us.length && !sbAvisouBucket; b++) {
+            if (sbEhDataUrl(us[b].foto)) {
+                var v = us[b].foto;
+                var u = await sbUpload(v, "perfil").catch(function () { return null; });
+                if (u && us[b].foto === v) { us[b].foto = u; mudou = true; }
+                if (!u) break;
+            }
         }
-    }
 
-    if (!sbAvisouBucket && sbEhDataUrl(empresa.logo)) {
-        var vl = empresa.logo;
-        var ul = await sbUpload(vl, "logo").catch(function () { return null; });
-        if (ul && empresa.logo === vl) { empresa.logo = ul; mudou = true; }
+        var es = estoque.slice();
+        for (var c = 0; c < es.length && !sbAvisouBucket; c++) {
+            if (sbEhDataUrl(es[c].foto)) {
+                var ve = es[c].foto;
+                var ue = await sbUpload(ve, "estoque").catch(function () { return null; });
+                if (ue && es[c].foto === ve) { es[c].foto = ue; mudou = true; }
+                if (!ue) break;
+            }
+        }
+
+        if (!sbAvisouBucket && sbEhDataUrl(empresa.logo)) {
+            var vl = empresa.logo;
+            var ul = await sbUpload(vl, "logo").catch(function () { return null; });
+            if (ul && empresa.logo === vl) { empresa.logo = ul; mudou = true; }
+        }
+    } catch (e) {
+        console.warn("Supabase (imagens):", e);
     }
 
     if (mudou) {   // guarda os links também neste aparelho
@@ -254,8 +278,11 @@ async function sbCarregar() {
 }
 
 var sbLento = false;
+var sbLeituraId = 0;   // identifica a leitura em andamento (para saber se ainda vale)
+var sbMotivoUltimo = "";   // último motivo de falha de leitura (aparece no diagnóstico)
 
 async function sbCarregarDeVerdade() {
+    var meuId = ++sbLeituraId;
     try {
         var out = {};
         var nomes = ["ordens", "usuarios", "eventos", "avisos"];
@@ -298,6 +325,7 @@ async function sbCarregarDeVerdade() {
         sbOnline = true;
         sbFalhasSeguidas = 0;
         sbAvisouRede = false;
+        sbMotivoUltimo = "";
 
         // Guarda o que veio do servidor: o envio compara com este retrato.
         // Antes isto só era feito no fim de sbCarregar(), e quando o banco estava
@@ -319,15 +347,10 @@ async function sbCarregarDeVerdade() {
 
         // O app já abriu com os dados do aparelho (o servidor demorou): junta
         // agora o que veio do servidor, sem perder o que foi feito nesse meio-tempo.
-        if (sbLento) {
+        // Só a leitura mais recente pode mexer na tela.
+        if (sbLento && meuId === sbLeituraId) {
             sbLento = false;
-            if (typeof user === "function" && user()) {
-                try {
-                    normalizar();
-                    aplicarMarca();
-                    renderTudo();
-                } catch (e6) { console.warn("Supabase:", e6); }
-            }
+            if (typeof sbAtualizar === "function") sbAtualizar();
         }
 
         return [
@@ -342,6 +365,7 @@ async function sbCarregarDeVerdade() {
         ];
     } catch (e) {
         sbOnline = false;
+        sbMotivoUltimo = sbMotivoErro(e);
         console.warn("Supabase:", e);
         // Avisa só na primeira falha: sem isso, um celular sem internet
         // mostrava o mesmo aviso a cada 30 segundos.
@@ -361,6 +385,55 @@ function sbSync() {
     sbSync.h = setTimeout(function () { sbSync.h = null; sbEnviar(); }, 500);
 }
 
+/* Envia as tabelas. Cada tabela é independente: se "estoque" falhar, a OS
+   criada agora sobe do mesmo jeito (antes, um erro em qualquer tabela
+   interrompia a sequência e as OS seguintes nunca chegavam ao servidor). */
+function sbChamar(fn, ms) {
+    return Promise.race([fn(), new Promise(function (res, rej) {
+        setTimeout(function () { rej(new Error("tempo esgotado no envio")); }, ms || 30000);
+    })]);
+}
+
+async function sbEnviarTabelas() {
+    var listas = sbListas();
+    var primeiroErro = null;
+
+    for (var t in listas) {
+        if (!sbTabelasOk[t]) continue;
+        if (t === "estoque" && !sbEstOk) continue;
+        if (t === "compras" && !sbComOk) continue;
+
+        try {
+            var lista = sbLista(listas[t]);
+            var atual = sbMapa(lista);
+            var ant = sbSnap[t] || {};
+            var subir = lista.filter(function (x) { return x && x.id != null && ant[String(x.id)] !== atual[String(x.id)]; });
+            var apagar = Object.keys(ant).filter(function (id) { return atual[id] === undefined; });
+
+            for (var i = 0; i < subir.length; i += 5) {   // lote pequeno: OS com foto em base64 é pesada
+                var lote = subir.slice(i, i + 5).map(function (x) {
+                    return { id: String(x.id), data: x, updated_at: new Date().toISOString() };
+                });
+                var r = await sbChamar(function () { return sb.from(t).upsert(lote); });
+                if (r.error) throw r.error;
+                // marca o que já subiu: se falhar depois, não reenvia tudo de novo
+                lote.forEach(function (x) { sbSnap[t][x.id] = JSON.stringify(x.data); });
+            }
+            if (apagar.length) {
+                var d = await sbChamar(function () { return sb.from(t).delete().in("id", apagar); });
+                if (d.error) throw d.error;
+            }
+            sbSnap[t] = atual;
+        } catch (e) {
+            console.warn("Supabase (" + t + "):", e);
+            if (!primeiroErro) primeiroErro = e;
+        }
+    }
+
+    // erro de rede na primeira tabela: o resto também falhou (avisa uma vez só)
+    if (primeiroErro) throw primeiroErro;
+}
+
 async function sbEnviar() {
     if (!sb) return;
     if (!sbOnline) {
@@ -377,35 +450,14 @@ async function sbEnviar() {
     if (sbOcupado) { sbSync(); return; }
     sbOcupado = true;
     try {
-        await sbSubirImagens();
+        // 1) O QUE IMPORTA PRIMEIRO: o texto das OS (título, status, itens, relatório).
+        //    As fotos/base64 podem ser grandes ou o bucket pode estar fora do ar; antes
+        //    isso acontecia ANTES do envio e, se travasse, a OS nova nunca subia.
+        await sbEnviarTabelas();
 
-        var listas = sbListas();
-        for (var t in listas) {
-            if (!sbTabelasOk[t]) continue;
-            if (t === "estoque" && !sbEstOk) continue;
-            if (t === "compras" && !sbComOk) continue;
-
-            var lista = sbLista(listas[t]);
-            var atual = sbMapa(lista);
-            var ant = sbSnap[t] || {};
-            var subir = lista.filter(function (x) { return x && x.id != null && ant[String(x.id)] !== atual[String(x.id)]; });
-            var apagar = Object.keys(ant).filter(function (id) { return atual[id] === undefined; });
-
-            for (var i = 0; i < subir.length; i += 5) {   // lote pequeno: OS com foto em base64 é pesada
-                var lote = subir.slice(i, i + 5).map(function (x) {
-                    return { id: String(x.id), data: x, updated_at: new Date().toISOString() };
-                });
-                var r = await sb.from(t).upsert(lote);
-                if (r.error) throw r.error;
-                // marca o que já subiu: se falhar depois, não reenvia tudo de novo
-                lote.forEach(function (x) { sbSnap[t][x.id] = JSON.stringify(x.data); });
-            }
-            if (apagar.length) {
-                var d = await sb.from(t).delete().in("id", apagar);
-                if (d.error) throw d.error;
-            }
-            sbSnap[t] = atual;
-        }
+        // 2) Depois as imagens (perfil, estoque, logo, fotos das OS) e um segundo envio
+        try { await sbSubirImagens(); } catch (eImg) { console.warn("Supabase (imagens):", eImg); }
+        await sbEnviarTabelas();
 
         var cfg = sbConfigAtual();
         for (var k in cfg) {
@@ -419,8 +471,10 @@ async function sbEnviar() {
         sbUltimoEnvio = Date.now();
         sbFalhasSeguidas = 0;
         sbFalhasEnvio = 0;
+        sbMotivoUltimo = "";
     } catch (e) {
         console.warn("Supabase:", e);
+        sbMotivoUltimo = sbMotivoErro(e);
         var rede = sbEhErroDeRede(e);
         sbFalhasSeguidas++;
         sbFalhasEnvio++;
@@ -454,6 +508,19 @@ function sbMesclar(srvLista, locLista, antes) {
     var locMap = {}, srvMap = {}, out = [], pendente = false;
     loc.forEach(function (x) { if (x && x.id != null) locMap[String(x.id)] = x; });
     srv.forEach(function (x) { if (x && x.id != null) srvMap[String(x.id)] = x; });
+
+    // Banco vazio mas com OS neste aparelho: nada foi enviado ainda (servidor novo ou
+    // envio que falhou). Antes a comparação achava que já estava tudo igual e a OS
+    // ficava só no celular. Aqui, tudo o que existe aqui conta como pendente.
+    if (!srv.length && loc.length) {
+        antes = {};
+        pendente = true;
+    }
+
+    if (!srv.length && loc.length) {
+        antes = {};
+        pendente = true;
+    }
 
     srv.forEach(function (s) {
         if (!s || s.id == null) return;
@@ -538,6 +605,18 @@ async function sbAtualizar() {
     } catch (e) {
         console.warn("Falha ao atualizar a tela:", e);
     }
+    // Sobe logo o que ficou pendente (o sbSync acima espera 0,5 s; aqui não perde a vez)
+    if (pend && !sbOcupado) sbEnviar();
+}
+
+// Leitura completa + envio do que ficou pendente (usada pelo diagnóstico
+// "Testar agora" em Perfil > Dados e backup > Conexão com o banco)
+async function sbForcarEnvio() {
+    if (!sb) return false;
+    try { await sbCarregarDeVerdade(); } catch (e) { return false; }
+    if (!sbOnline) return false;
+    await sbEnviar();
+    return sbFalhasEnvio === 0;
 }
 
 setInterval(sbAtualizar, 30000);

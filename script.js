@@ -574,6 +574,7 @@ function abrirDadosConexao() {
     var estOk = typeof sbEstOk === "undefined" || sbEstOk;
     var comOk = typeof sbComOk === "undefined" || sbComOk;
     var ultimo = (typeof sbUltimoEnvio === "number" && sbUltimoEnvio) ? fmtTs(sbUltimoEnvio) : "—";
+    var motivo = (typeof sbMotivoUltimo === "string" && sbMotivoUltimo) ? sbMotivoUltimo : "";
 
     function linha(ok, titulo, detalhe) {
         return '<div class="conf-linha ' + (ok ? "ok" : "ruim") + '">' +
@@ -591,6 +592,7 @@ function abrirDadosConexao() {
         linha(comOk, comOk ? "Tabela de compras" : "Tabela de compras ausente",
               comOk ? "Disponível no servidor." : "Rode o supabase.sql no Supabase para sincronizar as compras.") +
         '<p class="dica" style="margin:10px 0 0">Último envio concluído: <b>' + esc(ultimo) + '</b></p>' +
+        (motivo ? '<p class="dica" style="margin:6px 0 0;color:#C62828"><b>Último problema:</b> ' + esc(motivo) + '</p>' : "") +
         '<h4>Se algo não sincronizar</h4>' +
         '<p class="dica" style="margin:0 0 10px">1. Confira a internet do aparelho.<br>' +
         '2. No Supabase, abra o SQL Editor e rode o conteúdo de <b>supabase.sql</b> (cria tabelas, permissões e o espaço de fotos).<br>' +
@@ -635,12 +637,25 @@ function testarConexao() {
         h += '<p class="dica" style="margin:10px 0 0">' + (ruins.length
             ? "Revise os itens acima no Supabase. O app continua funcionando com os dados deste aparelho."
             : "Tudo certo: o banco respondeu em todas as tabelas.") + '</p>' +
+            '<p class="dica" style="margin:8px 0 0" id="testeEnvio"><i class="fa-solid fa-cloud-arrow-up"></i> Enviando agora as OS deste aparelho…</p>' +
             '<div class="sheet-acoes um"><button class="btn-pri" style="margin-top:0" onclick="fecharOS()">Fechar</button></div>';
         $("sheet").innerHTML = h;
         $("overlay").classList.add("on");
         $("sheet").classList.add("on");
         document.body.classList.add("folha-aberta");
         if (typeof sbAtualizar === "function") setTimeout(sbAtualizar, 200);
+
+        // Força a leitura completa e o envio do que estiver só neste aparelho
+        if (typeof sbForcarEnvio === "function") {
+            sbForcarEnvio().then(function (ok) {
+                var el = $("testeEnvio");
+                if (!el) return;
+                el.innerHTML = ok
+                    ? '<i class="fa-solid fa-circle-check"></i> <b>OS enviadas.</b> Abra o app em outro celular para conferir.'
+                    : '<i class="fa-solid fa-circle-exclamation"></i> Não consegui enviar: ' + esc(sbMotivoUltimo || "sem resposta do servidor") +
+                      '<br>As OS continuam salvas neste aparelho e o app tenta de novo sozinho.';
+            });
+        }
     }
 
     proxima();
@@ -2339,6 +2354,11 @@ function salvarOS(ev) {
     salvar();
     filtro = "todas";
     soMinhas = false;
+    // Envia a OS para o banco na hora (antes dependia da fila de 0,5 s e, se algo
+    // travasse, ela ficava só neste aparelho)
+    if (typeof sbEnviar === "function") {
+        try { sbEnviar(); } catch (e) {}
+    }
     ir("os");
 }
 

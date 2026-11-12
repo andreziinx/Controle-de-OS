@@ -641,7 +641,19 @@ function abrirDadosConexao() {
 
 // Teste de verdade: lê uma linha de cada tabela e diz o que respondeu
 function testarConexao() {
+    if (typeof sbGarantirBiblioteca === "function") {
+        toast("Testando a conexão...");
+        sbGarantirBiblioteca(function (ok) {
+            if (!ok) { toast("Supabase não carregou: verifique a internet do aparelho"); return; }
+            testarConexaoDeVerdade();
+        });
+        return;
+    }
     if (typeof sb === "undefined" || !sb) { toast("Supabase não carregou: verifique a internet"); return; }
+    testarConexaoDeVerdade();
+}
+
+function testarConexaoDeVerdade() {
     toast("Testando a conexão...");
     var tabelas = ["ordens", "usuarios", "eventos", "avisos", "estoque", "compras", "config"];
     var resultados = [];
@@ -6703,6 +6715,17 @@ document.addEventListener("visibilitychange", function () {
     if (!document.hidden && user()) { renderTudo(); notificarSistema(); }
 });
 
+// Antes de abrir: se a biblioteca do Supabase não chegou pelo CDN principal,
+// tenta baixar de outro endereço (até 6 s). O app abre de qualquer forma.
+function comBiblioteca(cb) {
+    var jaRodou = false;
+    function seguir() { if (!jaRodou) { jaRodou = true; cb(); } }
+    if (typeof sbGarantirBiblioteca === "function") sbGarantirBiblioteca(seguir);
+    else seguir();
+    setTimeout(seguir, 6000);
+}
+
+comBiblioteca(function () {
 abrirDB().then(function () {
     return sbCarregar();
 }).then(function (r) {
@@ -6714,6 +6737,7 @@ abrirDB().then(function () {
     sbLocal().then(function (l) {
         iniciarApp(l);
     }).catch(function () { iniciarApp([]); });
+});
 });
 
 function iniciarApp(r) {

@@ -3,7 +3,7 @@
    Não precisa mexer: ao publicar uma versão nova,
    o app se atualiza sozinho quando o aparelho tem internet.
 ========================================== */
-var VERSAO = "manutencao-v25";
+var VERSAO = "manutencao-v26";
 var CACHE_APP = VERSAO + "-app";
 var CACHE_LIVRE = VERSAO + "-externo";   // ícones, fontes e bibliotecas de CDN
 var CACHE_FOTOS = VERSAO + "-fotos";     // fotos do Supabase Storage
@@ -132,7 +132,15 @@ self.addEventListener("fetch", function (e) {
     }
 
     // Bibliotecas e fontes de CDN
-    if (/cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|fonts\.(googleapis|gstatic)\.com/.test(url.hostname)) {
+    // A biblioteca do Supabase (supabase-js) NÃO é guardada em cache: se a cópia
+    // gravada vier corrompida, o celular fica preso com ela e o app mostra
+    // "Biblioteca do Supabase não carregou" para sempre. Deixando ir direto
+    // na rede, ela se recupera sozinha. Se a rede falhar, o supabase.js tem
+    // um plano B que baixa de outro endereço.
+    if (/supabase-js|jspdf/.test(url.pathname) && /cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|unpkg\.com/.test(url.hostname)) {
+        return;
+    }
+    if (/cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|unpkg\.com|fonts\.(googleapis|gstatic)\.com/.test(url.hostname)) {
         e.respondWith(cachePrimeiro(req, CACHE_LIVRE, 0));
     }
 });

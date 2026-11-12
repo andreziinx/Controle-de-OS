@@ -12,7 +12,7 @@
 var SB_URL = "https://llmwmqmkqhwjvilkpseq.supabase.co";
 var SB_KEY = "sb_publishable_7wXP-xiLJJ2H12qD6YN0WQ_keb0PneE";
 var SB_BUCKET = "fotos";
-var SB_VERSAO = 5;   // sobe quando este arquivo mudar (aparece em Dados e backup)
+var SB_VERSAO = 6;   // sobe quando este arquivo mudar (aparece em Dados e backup)
 
 var sb = null;
 var sbOnline = false;
@@ -107,6 +107,74 @@ try {
 } catch (e) {
     console.warn("Supabase indisponível:", e && e.message);
     sb = null;
+}
+
+/* ==========================================
+   PLANO B DA BIBLIOTECA
+   A biblioteca do Supabase vem de um site externo (jsDelivr). No celular ela
+   às vezes não chega (internet fraca, bloqueio, cache velho do service worker)
+   e o app ficava sem conexão nenhuma, mostrando "Biblioteca do Supabase não
+   carregou". Agora, se ela não estiver pronta quando o app precisar, tentamos
+   baixar de outro endereço e começamos a sincronizar sem recarregar a página.
+========================================== */
+var SB_CDN_ALT = [
+    "https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js",
+    "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
+];
+var sbCarregandoLib = null;
+
+function sbCarregarBiblioteca() {
+    if (sb) return Promise.resolve(true);
+    if (sbCarregandoLib) return sbCarregandoLib;
+
+    sbCarregandoLib = new Promise(function (resolve) {
+        var i = 0;
+        function tentar() {
+            if (sb) return resolve(true);
+            if (i >= SB_CDN_ALT.length) { sbCarregandoLib = null; return resolve(false); }
+            var end = SB_CDN_ALT[i++];
+            var s = document.createElement("script");
+            s.src = end;
+            s.async = true;
+            s.onload = function () {
+                try {
+                    if (window.supabase && typeof window.supabase.createClient === "function") {
+                        sb = window.supabase.createClient(SB_URL, SB_KEY);
+                    }
+                } catch (e) { sb = null; }
+                if (sb) {
+                    console.warn("Biblioteca do Supabase carregada pelo plano B:", end);
+                    try {
+                        // Redesenha a tela de diagnóstico, se estiver aberta
+                        if (typeof abrirDadosConexao === "function" &&
+                            document.getElementById("sheet") &&
+                            document.getElementById("sheet").classList.contains("on") &&
+                            /Conexão com o banco/.test(document.getElementById("sheet").innerHTML)) {
+                            abrirDadosConexao();
+                        }
+                    } catch (e) {}
+                    try { sbAtualizar(); sbLigarRealtime(); } catch (e) {}
+                    resolve(true);
+                } else {
+                    tentar();
+                }
+            };
+            s.onerror = function () {
+                // remove o script que falhou para não deixar lixo na página
+                try { s.remove(); } catch (e) {}
+                tentar();
+            };
+            document.head.appendChild(s);
+        }
+        tentar();
+    });
+    return sbCarregandoLib;
+}
+
+// Garante a biblioteca antes de qualquer uso (chamado na abertura do app)
+function sbGarantirBiblioteca(cb) {
+    if (sb) { cb(true); return; }
+    sbCarregarBiblioteca().then(function (ok) { cb(ok); });
 }
 
 /* Traduz o erro do Supabase para algo que dá para resolver */

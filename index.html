@@ -436,9 +436,11 @@
 <div class="viewer" id="viewer" onclick="fecharFoto()">
     <button class="viewer-x" aria-label="Fechar" onclick="fecharFoto()"><i class="fa-solid fa-xmark"></i></button>
     <img id="viewerImg" alt="Foto">
+    <video id="viewerVideo" controls playsinline style="display:none" onclick="event.stopPropagation()"></video>
 </div>
 
-<input type="file" id="fileFoto" accept="image/*" multiple style="display:none">
+<input type="file" id="fileFoto" accept="image/*,.heic,.heif,.avif,.tif,.tiff" multiple style="display:none">
+<input type="file" id="fileVideo" accept="video/*" multiple style="display:none">
 <input type="file" id="fileAvatar" accept="image/*" style="display:none">
 <input type="file" id="fileLogo" accept="image/*" style="display:none">
 <input type="file" id="fileEstFoto" accept="image/*" style="display:none">

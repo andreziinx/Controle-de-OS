@@ -719,6 +719,8 @@ function alertas() {
     ordens.forEach(function (o) {
         if (o.status === "final" || !o.data) return;
         var minha = o.tecId === sessao;
+        // Prazos: cada técnico cuida dos das suas OS (o líder vê todos).
+        // As OS dos colegas continuam visíveis na lista, sem alerta.
         if (!adm && !minha) return;
 
         var d = diasAte(o.data);
@@ -1028,7 +1030,10 @@ function htmlOS(o) {
     var aviso = "";
     if (o.origem === "designada" && o.status === "aguardando") {
         if (souEu) aviso = '<div class="os-aviso"><i class="fa-solid fa-hand-point-right"></i>Aguardando o seu aceite</div>';
-        else if (!adm) aviso = '<div class="os-aviso trava"><i class="fa-solid fa-lock"></i>Só ' + esc(nomeDe(o.tecId)) + ' pode aceitar</div>';
+        else if (!adm) aviso = '<div class="os-aviso trava"><i class="fa-solid fa-lock"></i>' + esc(nomeDe(o.tecId)) + ' ainda não aceitou</div>';
+    }
+    if (!souEu && !adm && o.status === "andamento") {
+        aviso += '<div class="os-aviso trava"><i class="fa-solid fa-eye"></i>Você está visualizando a OS de ' + esc(nomeDe(o.tecId)) + '</div>';
     }
 
     var destaque = (souEu && !adm && o.origem === "designada" && o.status === "aguardando") ? " destaque" : "";
@@ -1091,11 +1096,12 @@ function renderInicio() {
     if ($("festaBox")) $("festaBox").innerHTML = festaHTML();
     if ($("metaBox")) $("metaBox").innerHTML = metaHTML();
     var base = adm ? ordens : ordens.filter(function (o) { return o.tecId === sessao; });
+    // TODAS as OS ficam visíveis para todos; os cartões mostram o total da equipe.
+    var todas = ordens;
 
-    function cont(st) { return base.filter(function (o) { return o.status === st; }).length; }
+    function cont(st) { return todas.filter(function (o) { return o.status === st; }).length; }
     var ag = cont("aguardando"), an = cont("andamento"), fi = cont("final");
-    var venceHoje = base.filter(function (o) { return o.status !== "final" && o.data === hoje(); }).length;
-    var minhas = adm ? "" : ", true";
+    var venceHoje = todas.filter(function (o) { return o.status !== "final" && o.data === hoje(); }).length;
 
     // Faixa de resumo: nada repete os cards de baixo
     if (adm) {
@@ -1105,15 +1111,15 @@ function renderInicio() {
             '<div class="res-item vermelho clic" onclick="filtrarOS(\'atrasadas\')"><b>' + ordens.filter(atrasada).length + '</b><small>Atrasadas</small></div>';
     } else {
         $("resumo").innerHTML =
-            '<div class="res-item azul clic" onclick="filtrarOS(\'abertas\', true)"><b>' + (ag + an) + '</b><small>Minhas abertas</small></div>' +
-            '<div class="res-item amarelo clic" onclick="filtrarOS(\'hoje\', true)"><b>' + venceHoje + '</b><small>Vencem hoje</small></div>' +
-            '<div class="res-item verde clic" onclick="filtrarOS(\'final\', true)"><b>' + fi + '</b><small>Concluídas</small></div>';
+            '<div class="res-item azul clic" onclick="filtrarOS(\'abertas\')"><b>' + (ag + an) + '</b><small>OS abertas</small></div>' +
+            '<div class="res-item amarelo clic" onclick="filtrarOS(\'hoje\')"><b>' + venceHoje + '</b><small>Vencem hoje</small></div>' +
+            '<div class="res-item verde clic" onclick="filtrarOS(\'final\')"><b>' + fi + '</b><small>Concluídas</small></div>';
     }
 
     $("cards").innerHTML =
-        '<div class="card aguardando" onclick="filtrarOS(\'aguardando\'' + minhas + ')"><div class="barra"></div><h3>Não iniciadas</h3><b>' + ag + '</b></div>' +
-        '<div class="card andamento" onclick="filtrarOS(\'andamento\'' + minhas + ')"><div class="barra"></div><h3>Em andamento</h3><b>' + an + '</b></div>' +
-        '<div class="card final" onclick="filtrarOS(\'final\'' + minhas + ')"><div class="barra"></div><h3>Finalizadas</h3><b>' + fi + '</b></div>';
+        '<div class="card aguardando" onclick="filtrarOS(\'aguardando\')"><div class="barra"></div><h3>Não iniciadas</h3><b>' + ag + '</b></div>' +
+        '<div class="card andamento" onclick="filtrarOS(\'andamento\')"><div class="barra"></div><h3>Em andamento</h3><b>' + an + '</b></div>' +
+        '<div class="card final" onclick="filtrarOS(\'final\')"><div class="barra"></div><h3>Finalizadas</h3><b>' + fi + '</b></div>';
 
     // Faixa de avisos
     var al = alertas();
@@ -1131,20 +1137,21 @@ function renderInicio() {
     $("alertaBanner").innerHTML = banner;
     $("alertaBanner").style.display = banner ? "block" : "none";
 
-    // Bloco de destaque
+    // Bloco de destaque: todos veem o que está esperando aceite (técnico dono tem o botão Aceitar)
     var dest = "";
     if (adm) {
         var atr = ordens.filter(atrasada).sort(porId).slice(0, 3);
         if (atr.length) dest = '<h2 class="alerta-titulo" style="margin-bottom:12px"><i class="fa-solid fa-triangle-exclamation"></i> Atrasadas</h2>' + atr.map(htmlOS).join("");
     } else {
-        var parAceitar = base.filter(function (o) { return o.status === "aguardando"; }).sort(porId);
-        if (parAceitar.length) dest = '<h2 style="margin-bottom:12px">🔔 Aguardando seu aceite</h2>' + parAceitar.map(htmlOS).join("");
+        var parAceitar = ordens.filter(function (o) { return o.origem === "designada" && o.status === "aguardando"; }).sort(porId);
+        if (parAceitar.length) dest = '<h2 style="margin-bottom:12px">🔔 Não iniciadas (aguardando aceite)</h2>' + parAceitar.slice(0, 3).map(htmlOS).join("") +
+            '<div class="bloco-topo"><a onclick="filtrarOS(\'aguardando\')">Ver todas</a></div>';
     }
     $("blocoDestaque").innerHTML = dest;
     $("blocoDestaque").style.display = dest ? "block" : "none";
 
     var campo = ordens.filter(function (o) { return o.origem === "campo"; }).sort(porId).slice(0, 3);
-    if (adm && campo.length) {
+    if (campo.length) {
         $("blocoCampo").innerHTML = '<div class="bloco-topo"><h2>📷 Relatórios de campo</h2><a onclick="filtrarOS(\'campo\')">Ver todos</a></div>' + campo.map(htmlOS).join("");
         $("blocoCampo").style.display = "block";
     } else {
@@ -1152,9 +1159,9 @@ function renderInicio() {
         $("blocoCampo").style.display = "none";
     }
 
-    // Técnico: vê (somente leitura) o que os colegas estão fazendo agora
+    // O que a equipe está executando agora (todos veem; só o dono pode editar)
     var eq = ordens.filter(function (o) { return o.status === "andamento" && o.tecId !== sessao; }).sort(porId).slice(0, 3);
-    if (!adm && eq.length) {
+    if (eq.length) {
         $("blocoEquipe").innerHTML = '<div class="bloco-topo"><h2>🔧 Em andamento na equipe</h2><a onclick="filtrarOS(\'andamento\')">Ver todas</a></div>' + eq.map(htmlOS).join("");
         $("blocoEquipe").style.display = "block";
     } else {
@@ -1162,7 +1169,7 @@ function renderInicio() {
         $("blocoEquipe").style.display = "none";
     }
 
-    $("tituloRecentes").textContent = adm ? "Últimas ordens" : "Minhas últimas ordens";
+    $("tituloRecentes").textContent = adm ? "Últimas ordens" : "Últimas ordens (minhas)";
     $("listaRecentes").innerHTML = listaHTML(base.slice().sort(porId).slice(0, 5),
         adm ? "Nenhuma OS ainda. Toque no + para criar." : "Você ainda não tem OS. Toque no + para registrar um serviço.");
 }
@@ -1179,10 +1186,8 @@ function setFiltro(f) { filtro = f; renderOS(); }
 function toggleMinhas() { soMinhas = !soMinhas; renderOS(); }
 
 function passa(o) {
-    // "Minhas" desligado: vê também as OS dos colegas (somente leitura).
-    // Antes, esta linha cortava a lista também com o filtro desligado e o
-    // técnico só enxergava as próprias OS: a OS aberta por ele não aparecia
-    // para mais ninguém.
+    // Todos veem TODAS as OS. O chip "Minhas" serve só para o técnico se achar
+    // na lista; editar/aceitar/finalizar continua restrito ao dono da OS.
     if (soMinhas && o.tecId !== sessao) return false;
     if (filtro === "atrasadas") return atrasada(o);
     if (filtro === "hoje") return o.status !== "final" && o.data === hoje();
@@ -1216,7 +1221,7 @@ function renderOS() {
         return alvo.indexOf(q) !== -1;
     }).sort(porId);
 
-    $("listaOS").innerHTML = listaHTML(arr, "Nenhuma ordem encontrada.");
+    $("listaOS").innerHTML = listaHTML(arr, soMinhas ? "Você não tem OS nesta lista. Desligue o 'Minhas' para ver as da equipe." : "Nenhuma ordem encontrada.");
 }
 
 /* ==========================================
@@ -1866,10 +1871,65 @@ function comprimir(file, cb) {
     r.readAsDataURL(file);
 }
 
+// Qualquer formato de imagem é aceito (JPG, PNG, HEIC, WEBP, GIF...).
+// Se o navegador conseguir abrir a imagem, ela é reduzida e vira JPEG; se não
+// conseguir (ex.: HEIC no computador), o arquivo é guardado do jeito que veio.
+function fotoDoArquivo(file, cb) {
+    if (file && /^image\//.test(file.type || "") && file.type !== "image/gif" && file.size < 12 * 1024 * 1024) {
+        comprimir(file, function (url) {
+            if (url) return cb(url);
+            lerArquivoBase64(file, cb);
+        });
+        return;
+    }
+    lerArquivoBase64(file, cb);
+}
+
+function lerArquivoBase64(file, cb) {
+    var r = new FileReader();
+    r.onload = function () { cb(typeof r.result === "string" ? r.result : null); };
+    r.onerror = function () { cb(null); };
+    r.readAsDataURL(file);
+}
+
+var TIPOS_IMG = /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|tiff?|jfif|svg)(\?|#|$)/i;
+var TIPOS_VIDEO = /\.(mp4|webm|ogg|ogv|mov|m4v|3gp|avi|mkv)(\?|#|$)/i;
+
+function ehVideo(f) {
+    if (typeof f !== "string" || !f) return false;
+    if (f.indexOf("data:video") === 0) return true;
+    if (f.indexOf("data:image") === 0) return false;
+    return TIPOS_VIDEO.test(f);
+}
+
+function ehImagem(f) {
+    if (typeof f !== "string" || !f) return false;
+    if (f.indexOf("data:image") === 0) return true;
+    if (f.indexOf("data:") === 0) return false;
+    return TIPOS_IMG.test(f) || f.indexOf("http") !== 0;
+}
+
+function abrirVideo(src) {
+    var v = $("viewerVideo");
+    if (!v) return;
+    $("viewerImg").style.display = "none";
+    $("viewerImg").src = "";
+    v.style.display = "block";
+    v.src = src;
+    $("viewer").classList.add("on");
+    try { v.play(); } catch (e) {}
+}
+
 function pickFoto(alvo, tipo) {
     pickCtx = { alvo: alvo, tipo: tipo };
     $("fileFoto").value = "";
     $("fileFoto").click();
+}
+
+function pickVideo(alvo, tipo) {
+    pickCtx = { alvo: alvo, tipo: tipo };
+    $("fileVideo").value = "";
+    $("fileVideo").click();
 }
 
 function listaFotos(alvo, tipo) {
@@ -1879,12 +1939,13 @@ function listaFotos(alvo, tipo) {
 }
 
 function aoEscolherFotos() {
+    // fotos de qualquer formato (comprimidas quando o navegador consegue abrir)
     var files = Array.prototype.slice.call($("fileFoto").files);
     if (!files.length || !pickCtx) return;
     var ctx = pickCtx, n = files.length;
 
     files.forEach(function (f) {
-        comprimir(f, function (url) {
+        fotoDoArquivo(f, function (url) {
             var arr = listaFotos(ctx.alvo, ctx.tipo);
             if (url && arr) {
                 if (arr.length >= MAX_FOTOS) toast("Máximo de " + MAX_FOTOS + " fotos por etapa");
@@ -1892,6 +1953,31 @@ function aoEscolherFotos() {
             }
             n--;
             if (n === 0) fotosAtualizadas(ctx.alvo);
+        });
+    });
+}
+
+// VÍDEOS: vão no mesmo espaço das fotos (mesma lista de anexos da OS)
+var MAX_VIDEO_MB = 12;
+
+function aoEscolherVideos() {
+    var files = Array.prototype.slice.call($("fileVideo").files);
+    if (!files.length || !pickCtx) return;
+    var ctx = pickCtx, n = files.length;
+
+    files.forEach(function (f) {
+        if (f.size > MAX_VIDEO_MB * 1024 * 1024) {
+            toast("Vídeo muito grande (máx. " + MAX_VIDEO_MB + " MB): " + f.name.slice(0, 24));
+            if (--n === 0) fotosAtualizadas(ctx.alvo);
+            return;
+        }
+        lerArquivoBase64(f, function (url) {
+            var arr = listaFotos(ctx.alvo, ctx.tipo);
+            if (url && arr) {
+                if (arr.length >= MAX_FOTOS) toast("Máximo de " + MAX_FOTOS + " anexos por etapa");
+                else arr.push(url);
+            }
+            if (--n === 0) fotosAtualizadas(ctx.alvo);
         });
     });
 }
@@ -1911,6 +1997,9 @@ function rmFoto(alvo, tipo, i) {
 }
 
 function verFoto(src) {
+    var v = $("viewerVideo");
+    if (v) { try { v.pause(); } catch (e) {} v.src = ""; v.style.display = "none"; }
+    $("viewerImg").style.display = "";
     $("viewerImg").src = src;
     $("viewer").classList.add("on");
 }
@@ -1918,6 +2007,8 @@ function verFoto(src) {
 function fecharFoto() {
     $("viewer").classList.remove("on");
     $("viewerImg").src = "";
+    var v = $("viewerVideo");
+    if (v) { try { v.pause(); } catch (e) {} v.src = ""; v.style.display = "none"; }
 }
 
 function grupoFotos(alvo, tipo, arr, pode) {
@@ -1927,12 +2018,20 @@ function grupoFotos(alvo, tipo, arr, pode) {
 function fotosInner(alvo, tipo, arr, pode) {
     var h = "";
     arr.forEach(function (f, i) {
-        h += '<div class="foto"><img src="' + f + '" onclick="verFoto(this.src)" alt="Foto">' +
-             (pode ? '<button type="button" class="foto-x" onclick="rmFoto(\'' + alvo + '\',\'' + tipo + '\',' + i + ')">✕</button>' : "") +
-             '</div>';
+        if (ehVideo(f)) {
+            h += '<div class="foto video"><video src="' + f + '" preload="metadata" playsinline muted></video>' +
+                 '<span class="foto-play" onclick="abrirVideo(this.parentNode.querySelector(\'video\').src)"><i class="fa-solid fa-play"></i></span>' +
+                 (pode ? '<button type="button" class="foto-x" onclick="rmFoto(\'' + alvo + '\',\'' + tipo + '\',' + i + ')">✕</button>' : "") +
+                 '</div>';
+        } else {
+            h += '<div class="foto"><img src="' + f + '" onclick="verFoto(this.src)" alt="Foto">' +
+                 (pode ? '<button type="button" class="foto-x" onclick="rmFoto(\'' + alvo + '\',\'' + tipo + '\',' + i + ')">✕</button>' : "") +
+                 '</div>';
+        }
     });
     if (pode && arr.length < MAX_FOTOS) {
-        h += '<button type="button" class="foto-add" onclick="pickFoto(\'' + alvo + '\',\'' + tipo + '\')"><i class="fa-solid fa-camera"></i>Adicionar</button>';
+        h += '<button type="button" class="foto-add" onclick="pickFoto(\'' + alvo + '\',\'' + tipo + '\')"><i class="fa-solid fa-camera"></i>Adicionar</button>' +
+             '<button type="button" class="foto-add video" onclick="pickVideo(\'' + alvo + '\',\'' + tipo + '\')"><i class="fa-solid fa-video"></i>Vídeo</button>';
     }
     if (!arr.length && !pode) h += '<span class="sem-foto">Sem fotos</span>';
     return h;
@@ -2271,11 +2370,14 @@ function abrirOS(id) {
 
     if (o.origem === "designada" && o.status === "aguardando") {
         if (souEu) h += '<div class="banner"><i class="fa-solid fa-hand-point-right"></i>Esta OS foi designada para <b>você</b>. Aceite para começar.</div>';
-        else if (!adm) h += '<div class="banner trava"><i class="fa-solid fa-lock"></i>Esta OS é do(a) <b>' + nome + '</b>. Você pode visualizar, mas só ele(a) pode aceitar.</div>';
+        else if (!adm) h += '<div class="banner trava"><i class="fa-solid fa-eye"></i>Esta OS é do(a) <b>' + nome + '</b>. Você pode visualizar tudo, mas só ele(a) pode aceitar, editar e finalizar.</div>';
         else h += '<div class="banner"><i class="fa-solid fa-hourglass-half"></i>Aguardando o aceite de <b>' + nome + '</b>.</div>';
     }
     if (o.origem === "designada" && o.status === "andamento" && !souEu) {
-        h += '<div class="banner trava"><i class="fa-solid fa-person-digging"></i><b>' + nome + '</b> está executando esta OS.</div>';
+        h += '<div class="banner trava"><i class="fa-solid fa-person-digging"></i><b>' + nome + '</b> está executando esta OS. Você está visualizando.</div>';
+    }
+    if (o.origem === "campo" && !souEu) {
+        h += '<div class="banner trava"><i class="fa-solid fa-eye"></i>Relatório de campo de <b>' + nome + '</b>. Você está visualizando — só ele(a) edita esta OS.</div>';
     }
 
     h += '<div class="grade-info">' +
@@ -2355,12 +2457,12 @@ function abrirOS(id) {
             h += '<p class="dica" style="margin:0 0 10px">Fotos e materiais são opcionais, mas ajudam a documentar o serviço.</p>' +
                  '<div class="sheet-acoes um"><button class="btn-pri verde" onclick="finalizarOS(' + o.id + ')"><i class="fa-solid fa-flag-checkered"></i> Finalizar OS</button></div>';
         } else if (!souEu && o.status === "aguardando") {
-            h += '<div class="sheet-acoes um"><button class="btn-pri btn-desab" disabled><i class="fa-solid fa-lock"></i> Só ' + nome + ' pode aceitar</button></div>';
+            h += '<div class="sheet-acoes um"><button class="btn-pri btn-desab" disabled><i class="fa-solid fa-lock"></i> ' + nome + ' ainda não aceitou</button></div>';
         } else if (souEu && o.status === "final") {
             h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar OS</button></div>';
         }
     } else if (souEu) {
-        // OS aberta pelo próprio técnico: fica em andamento até o "Finalizar OS"
+        // OS aberta pelo próprio técnico ("souEu" e o origem é campo)
         if (o.status === "andamento") {
             h += '<p class="dica" style="margin:0 0 10px">Esta OS está <b>em andamento</b>. Antes de terminar, confira fotos, materiais e assinatura.</p>' +
                  '<div class="sheet-acoes"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar OS</button>' +
@@ -2370,6 +2472,8 @@ function abrirOS(id) {
             h += '<div class="sheet-acoes"><button class="btn-sec" onclick="editarOS(' + o.id + ')"><i class="fa-solid fa-pen"></i> Editar relatório</button>' +
                  '<button class="btn-perigo" style="margin-top:0" onclick="excluirOS(' + o.id + ')"><i class="fa-solid fa-trash"></i> Excluir</button></div>';
         }
+    } else {
+        h += '<div class="sheet-acoes um"><button class="btn-sec" onclick="fecharOS()"><i class="fa-solid fa-eye"></i> Somente visualização · Fechar</button></div>';
     }
 
     // O técnico também pode passar a OS para outro técnico (como o líder)
@@ -2641,6 +2745,8 @@ function pdfFotoBase64(link) {
 
 function pdfCarregarImagem(src) {
     if (typeof src !== "string" || !src) return Promise.resolve(null);
+    // vídeo não entra no PDF (só foto): a lista de anexos mistura os dois
+    if (ehVideo(src)) return Promise.resolve(null);
     if (src.indexOf("data:image") === 0) return pdfImagemDe(src);
     // link do servidor: baixa primeiro (caminho mais confiável no celular)
     return pdfFotoBase64(src).then(function (im) {
@@ -3850,6 +3956,12 @@ function porNome(a, b) {
 function itemPendente(alvo) {
     var n = $("iNome_" + alvo), c = $("iCx_" + alvo), e = $("iEst_" + alvo);
     return !!((e && e.value) || (n && n.value.trim()) || (c && c.value.trim()));
+}
+
+function limparBuscaEstoque(alvo) {
+    var b = $("iBusca_" + alvo);
+    if (b) b.value = "";
+    preencherSelectEstoque(alvo, "");
 }
 
 function aoEstoque(alvo) {
@@ -5929,6 +6041,7 @@ function itensInner(alvo, arr, pode) {
     var emEdicao = pode ? $("iQtd_" + alvo) : null;
     var digitado = emEdicao ? {
         est: $("iEst_" + alvo) ? $("iEst_" + alvo).value : "",
+        busca: $("iBusca_" + alvo) ? $("iBusca_" + alvo).value : "",
         nome: $("iNome_" + alvo) ? $("iNome_" + alvo).value : "",
         cx: $("iCx_" + alvo) ? $("iCx_" + alvo).value : "",
         qtd: emEdicao.value,
@@ -5959,14 +6072,12 @@ function itensInner(alvo, arr, pode) {
     if (pode) {
         var optsEst = "";
         if (estoque.length) {
-            optsEst = '<label class="campo"><span>Item do estoque</span><select id="iEst_' + alvo + '" onchange="aoEstoque(' + a + ')">' +
+            var filtroBusca = (digitado && digitado.busca) ? digitado.busca : "";
+            optsEst = '<label class="campo"><span>Item do estoque</span><input type="text" id="iBusca_' + alvo + '" class="busca-est" placeholder="Buscar item: nome, caixa ou rua..." autocomplete="off" value="' + esc(filtroBusca) + '" oninput="filtraEstoque(' + a + ',this.value)"></label>' +
+                '<label class="campo"><span>Selecione o item</span><select id="iEst_' + alvo + '" onchange="aoEstoque(' + a + ')">' +
                 '<option value="">Outro item (digitar abaixo)</option>' +
-                estoque.slice().sort(porNome).map(function (e) {
-                    var sd = saldoEstoque(e);
-                    return '<option value="' + e.id + '"' + (sd <= 0 ? " disabled" : "") + '>' + esc(e.nome) + (e.local ? ' · ' + esc(e.local) : "") + (e.caixa ? ' · cx ' + esc(e.caixa) : "") +
-                           ' — ' + (sd <= 0 ? "sem saldo" : "saldo " + fmtQtd(sd) + " " + esc(e.un)) + '</option>';
-                }).join("") +
-                '</select></label><p class="dica" id="iEstDica_' + alvo + '" style="margin:-4px 0 10px"></p>';
+                '</select></label>' +
+                '<p class="dica" id="iEstDica_' + alvo + '" style="margin:-4px 0 10px"></p>';
         }
         h += '<div class="item-form">' + optsEst +
             '<div id="iManual_' + alvo + '"><div class="linha2">' +
@@ -5986,8 +6097,45 @@ function itensInner(alvo, arr, pode) {
             var se = $("iEst_" + alvo);
             if (se) { se.value = digitado.est; aoEstoque(alvo); }
         }
+        preencherSelectEstoque(alvo, filtroBusca);
     }
     return h;
+}
+
+/* Busca do item do estoque dentro da OS */
+function normalizaBusca(t) {
+    return String(t || "").toLowerCase().normalize ? String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : String(t || "").toLowerCase();
+}
+
+function preencherSelectEstoque(alvo, termo) {
+    var sel = $("iEst_" + alvo);
+    if (!sel) return;
+    var atual = sel.value;
+    var q = normalizaBusca(termo);
+    var lista = estoque.slice().sort(porNome);
+    if (q) {
+        lista = lista.filter(function (e) {
+            var alvoTxt = normalizaBusca([e.nome, e.caixa, e.local, e.rua, e.cat, locTexto(e)].join(" "));
+            // todas as palavras digitadas precisam aparecer
+            return q.split(/\s+/).every(function (p) { return alvoTxt.indexOf(p) !== -1; });
+        });
+    }
+    var h = '<option value="">Outro item (digitar abaixo)</option>' + lista.map(function (e) {
+        var sd = saldoEstoque(e);
+        return '<option value="' + e.id + '"' + (sd <= 0 ? " disabled" : "") + '>' + esc(e.nome) + (e.local ? ' · ' + esc(e.local) : "") + (e.caixa ? ' · cx ' + esc(e.caixa) : "") +
+               ' — ' + (sd <= 0 ? "sem saldo" : "saldo " + fmtQtd(sd) + " " + esc(e.un)) + '</option>';
+    }).join("");
+    sel.innerHTML = h;
+    // mantém o item já escolhido mesmo que a busca esconda ele
+    if (atual && !lista.some(function (e) { return String(e.id) === String(atual); })) {
+        var jaEsc = estItem(atual);
+        if (jaEsc) sel.insertAdjacentHTML("beforeend", '<option value="' + jaEsc.id + '">' + esc(jaEsc.nome) + ' — escolhido</option>');
+    }
+    sel.value = atual || "";
+}
+
+function filtraEstoque(alvo, termo) {
+    preencherSelectEstoque(alvo, termo);
 }
 
 function renderItens(alvo) {
@@ -6006,6 +6154,7 @@ function itensMudaram(alvo) {
     montarDatalist();
     var campo = $("iNome_" + alvo);   // volta o cursor para o campo de produto
     if (campo) campo.focus();
+    else { campo = $("iBusca_" + alvo); if (campo) campo.focus(); }
 }
 
 function itemEnter(e, alvo) {
@@ -6472,6 +6621,7 @@ document.querySelectorAll("#segPrior button").forEach(function (b) {
 
 $("fTitulo").addEventListener("input", function () { $("cTitulo").classList.remove("invalido"); });
 $("fileFoto").addEventListener("change", aoEscolherFotos);
+if ($("fileVideo")) $("fileVideo").addEventListener("change", aoEscolherVideos);
 $("fileAvatar").addEventListener("change", aoEscolherAvatar);
 $("fileLogo").addEventListener("change", aoEscolherLogo);
 $("fileEstFoto").addEventListener("change", aoEscolherEstFoto);

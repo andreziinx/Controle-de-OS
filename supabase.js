@@ -48,6 +48,8 @@ function sbMotivoErro(e) {
         return "Sem permissão no banco: rode o supabase.sql (cria as políticas de acesso).";
     if (cod === "NoSuchBucket" || /bucket not found/i.test(m))
         return "O espaço de fotos não existe no Supabase: rode o supabase.sql para criar o bucket 'fotos'.";
+    if (/exceeded the maximum allowed size|Payload too large|entity too large|too large/i.test(m))
+        return "O arquivo é maior que o limite do espaço de fotos do Supabase (aumente o limite do bucket 'fotos' ou use um vídeo mais curto).";
     if (/failed to fetch|networkerror|load failed|network request failed|timeout|fetch/i.test(m))
         return "Não alcançou o Supabase: confira a internet (os dados ficam salvos neste aparelho).";
     return "Erro do servidor: " + m.slice(0, 80) + ".";
@@ -87,13 +89,30 @@ function sbLista(v) {
    (no banco fica só o link da foto)
 ========================================== */
 function sbEhDataUrl(s) {
-    return typeof s === "string" && s.indexOf("data:image") === 0;
+    // fotos e vídeos anexados na OS (antes só foto: vídeo ficava preso no aparelho)
+    return typeof s === "string" && (s.indexOf("data:image") === 0 || s.indexOf("data:video") === 0);
+}
+
+function sbExtArquivo(tipo) {
+    var m = /^data:([^;]+);/.exec(tipo || "");
+    var t = (m ? m[1] : "").toLowerCase();
+    var mapa = {
+        "image/png": "png", "image/gif": "gif", "image/webp": "webp", "image/heic": "heic",
+        "image/heif": "heif", "image/avif": "avif", "image/tiff": "tif", "image/bmp": "bmp",
+        "image/svg+xml": "svg",
+        "video/mp4": "mp4", "video/webm": "webm", "video/ogg": "ogv", "video/quicktime": "mov",
+        "video/x-matroska": "mkv", "video/3gpp": "3gp", "video/x-msvideo": "avi"
+    };
+    if (mapa[t]) return mapa[t];
+    if (t.indexOf("image/") === 0) return "jpg";
+    if (t.indexOf("video/") === 0) return "mp4";
+    return "bin";
 }
 
 async function sbUpload(dataUrl, pasta) {
     var resp = await fetch(dataUrl);
     var blob = await resp.blob();
-    var ext = blob.type === "image/png" ? "png" : "jpg";
+    var ext = blob.type === "image/png" ? "png" : sbExtArquivo(dataUrl);
     var nome = pasta + "/" + Date.now() + "_" + Math.random().toString(36).slice(2, 8) + "." + ext;
     var r = await sb.storage.from(SB_BUCKET).upload(nome, blob, { contentType: blob.type, cacheControl: "31536000" });
     if (r.error) throw r.error;
@@ -120,6 +139,9 @@ async function sbSubirImagens() {
                         toast("Não foi possível enviar fotos: " + sbMotivoErro(e));
                     }
                     return;                     // sem bucket, nem tenta as próximas
+                }
+                if (/maximum allowed size|entity too large|payload too large/i.test(String(e && e.message))) {
+                    toast(sbMotivoErro(e));     // arquivo grande demais (vídeo): avisa e segue
                 }
                 continue;                       // foto com problema: tenta de novo depois
             }

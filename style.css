@@ -1061,6 +1061,17 @@ a{ cursor:pointer; }
 
 .foto-add i{ font-size:20px; }
 
+/* vídeo anexado na OS */
+.foto.video video{ width:100%; height:100%; object-fit:cover; display:block; background:#000; }
+.foto-play{
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:18px;
+    background:rgba(0,0,0,.35);
+    cursor:pointer;
+}
+.foto-add.video{ color:#7B1FA2; }
+
 .sem-foto{ font-size:13px; color:#90A4AE; align-self:center; }
 
 .viewer{
@@ -1075,6 +1086,7 @@ a{ cursor:pointer; }
 
 .viewer.on{ display:flex; }
 .viewer img{ max-width:100%; max-height:100%; object-fit:contain; }
+.viewer video{ max-width:100%; max-height:100%; object-fit:contain; }
 
 .viewer-x{
     position:absolute;
@@ -1882,6 +1894,12 @@ a{ cursor:pointer; }
 
 .item-form .campo{ margin-bottom:10px; }
 .item-form .dica{ margin-top:8px; }
+
+/* busca do item do estoque dentro da OS */
+.busca-est{
+    background:#fff url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2390A4AE' stroke-width='2.4' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='M20 20l-4-4'/></svg>") no-repeat 12px center;
+    padding-left:36px;
+}
 
 /* ==========================================
    APLICATIVO INSTALADO (PWA) / ÁREA SEGURA

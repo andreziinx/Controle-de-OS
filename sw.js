@@ -3,7 +3,7 @@
    Não precisa mexer: ao publicar uma versão nova,
    o app se atualiza sozinho quando o aparelho tem internet.
 ========================================== */
-var VERSAO = "manutencao-v24";
+var VERSAO = "manutencao-v25";
 var CACHE_APP = VERSAO + "-app";
 var CACHE_LIVRE = VERSAO + "-externo";   // ícones, fontes e bibliotecas de CDN
 var CACHE_FOTOS = VERSAO + "-fotos";     // fotos do Supabase Storage

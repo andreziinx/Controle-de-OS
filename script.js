@@ -552,6 +552,34 @@ function ir(nome) {
         toast("Não foi possível atualizar a tela. Feche e abra o app.");
     }
     window.scrollTo(0, 0);
+
+    // Busca novidades no servidor ao entrar na tela: antes a lista podia mostrar
+    // dados de minutos atrás (a sincronização só acontecia a cada 30 s).
+    if (typeof sbBuscarAgora === "function" && nome !== "nova") sbBuscarAgora();
+    // Ao entrar na lista de OS, a próxima ficha aberta busca o estado atual no servidor
+    if (nome === "os") sbAtualizarFicha = true;
+}
+
+/* Busca novidades no servidor sem atrapalhar a tela.
+   Usado ao trocar de tela e ao abrir a OS: quem está com o app aberto passa a
+   ver o que os colegas fizeram em segundos, não em minutos. */
+function sbBuscarAgora(comDesenho) {
+    if (typeof sbAtualizar !== "function") return;
+    if (typeof sbOnline !== "undefined" && !sbOnline && !sb) return;
+    var promise;
+    try { promise = sbAtualizar(); } catch (e) { return; }
+    // Depois da busca, redesenha a tela atual (com 250 ms de folga para os dados chegarem)
+    if (!promise || typeof promise.then !== "function") return;
+    promise.then(function () {
+        if (!user()) return;
+        try {
+            if (viewAtual === "inicio") renderInicio();
+            if (viewAtual === "os") renderOS();
+            if (viewAtual === "calendario") renderCalendario();
+            if (viewAtual === "perfil") renderPerfil();
+            if (comDesenho) renderTudo();
+        } catch (e) {}
+    }).catch(function () {});
 }
 
 /* ==========================================
@@ -575,6 +603,7 @@ function abrirDadosConexao() {
     var comOk = typeof sbComOk === "undefined" || sbComOk;
     var ultimo = (typeof sbUltimoEnvio === "number" && sbUltimoEnvio) ? fmtTs(sbUltimoEnvio) : "—";
     var motivo = (typeof sbMotivoUltimo === "string" && sbMotivoUltimo) ? sbMotivoUltimo : "";
+    var rtOk = (typeof sbRtOk === "undefined") ? null : sbRtOk;
 
     function linha(ok, titulo, detalhe) {
         return '<div class="conf-linha ' + (ok ? "ok" : "ruim") + '">' +
@@ -591,6 +620,10 @@ function abrirDadosConexao() {
               estOk ? "Disponível no servidor." : "Rode o supabase.sql no Supabase para sincronizar o estoque.") +
         linha(comOk, comOk ? "Tabela de compras" : "Tabela de compras ausente",
               comOk ? "Disponível no servidor." : "Rode o supabase.sql no Supabase para sincronizar as compras.") +
+        linha(rtOk, rtOk === null ? "Tempo real: testando" : (rtOk ? "Tempo real ligado" : "Tempo real desligado"),
+              rtOk === null ? "O app está tentando ligar o aviso instantâneo."
+                  : (rtOk ? "As OS aparecem em segundos, sem precisar fechar o app."
+                          : "Falta ligar o Realtime na tabela 'ordens' no Supabase. Enquanto isso, o app busca a cada 1 minuto.")) +
         '<p class="dica" style="margin:10px 0 0">Último envio concluído: <b>' + esc(ultimo) + '</b></p>' +
         (motivo ? '<p class="dica" style="margin:6px 0 0;color:#C62828"><b>Último problema:</b> ' + esc(motivo) + '</p>' : "") +
         '<h4>Se algo não sincronizar</h4>' +
@@ -2365,9 +2398,19 @@ function salvarOS(ev) {
 /* ==========================================
    DETALHE DA OS
 ========================================== */
+var sbAtualizarFicha = false;   // marca que a próxima abertura de ficha deve buscar no servidor
+
 function abrirOS(id) {
     var o = buscar(id);
     if (!o) return;
+
+    // Busca novidades no servidor antes de montar a ficha: evita mostrar a OS
+    // como estava há minutos (o colega pode ter aceitado, mudado o relatório...).
+    // Só vem para cá uma vez por abertura (a ficha se remonta várias vezes).
+    if (sbAtualizarFicha && typeof sbBuscarAgora === "function") {
+        sbAtualizarFicha = false;
+        sbBuscarAgora();
+    }
 
     var adm = ehAdmin();
     var souEu = !adm && o.tecId === sessao;
@@ -2595,6 +2638,8 @@ function fecharOS() {
     $("overlay").classList.remove("on");
     $("sheet").classList.remove("on");
     document.body.classList.remove("folha-aberta");
+    // Se o tempo real avisou de mudanças enquanto a ficha estava aberta, aplica agora
+    if (typeof sbLiberouTela === "function") sbLiberouTela();
 }
 
 /* ==========================================

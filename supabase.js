@@ -12,7 +12,7 @@
 var SB_URL = "https://llmwmqmkqhwjvilkpseq.supabase.co";
 var SB_KEY = "sb_publishable_7wXP-xiLJJ2H12qD6YN0WQ_keb0PneE";
 var SB_BUCKET = "fotos";
-var SB_VERSAO = 4;   // sobe quando este arquivo mudar (aparece em Dados e backup)
+var SB_VERSAO = 5;   // sobe quando este arquivo mudar (aparece em Dados e backup)
 
 var sb = null;
 var sbOnline = false;
@@ -27,6 +27,78 @@ var sbFalhasSeguidas = 0;  // falhas de rede em sequência (espera crescente ent
 var sbUltimoEnvio = 0;
 var sbFalhasEnvio = 0;     // falhas de envio em sequência (zera só quando um envio dá certo)
 var sbSnap = { ordens: {}, usuarios: {}, eventos: {}, avisos: {}, estoque: {}, compras: {}, config: {} };
+
+/* ==========================================
+   TEMPO REAL (Supabase Realtime)
+   O servidor avisa o celular assim que outra pessoa grava uma OS, em vez de
+   esperar o ciclo de 30 segundos. Se o Realtime não estiver ligado no projeto,
+   o app continua funcionando com a busca periódica (nada quebra).
+========================================== */
+var sbRtCanal = null;
+var sbRtOk = null;        // true = Realtime ligado | false = não ligou | null = ainda testando
+var sbRtEspera = 0;       // tempo de espera antes de tentar reconectar
+var sbRtRecarregar = false;   // chegou aviso com a tela ocupada: busca assim que liberar
+var sbAoAtualizar = null;     // função do script.js chamada depois de uma busca por aviso
+
+function sbLigarRealtime() {
+    if (!sb || !sb.channel || sbRtCanal) return;
+    try {
+        sbRtCanal = sb.channel("tempo-real")
+            .on("postgres_changes", { event: "*", schema: "public", table: "ordens" }, sbRecebeuAviso)
+            .on("postgres_changes", { event: "*", schema: "public", table: "avisos" }, sbRecebeuAviso)
+            .on("postgres_changes", { event: "*", schema: "public", table: "eventos" }, sbRecebeuAviso)
+            .subscribe(function (st) {
+                if (st === "SUBSCRIBED") {
+                    sbRtOk = true;
+                    sbRtEspera = 0;
+                } else if (st === "CHANNEL_ERROR" || st === "TIMED_OUT" || st === "CLOSED") {
+                    sbRtOk = false;
+                    sbRtCanal = null;
+                    // tenta de novo mais tarde (sem incomodar o usuário)
+                    sbRtEspera = Math.min((sbRtEspera || 15000) * 2, 120000);
+                    setTimeout(sbLigarRealtime, sbRtEspera);
+                }
+            });
+    } catch (e) {
+        sbRtOk = false;
+        sbRtCanal = null;
+    }
+}
+
+// Chegou mudança do servidor. Se a tela estiver ocupada (formulário, ficha
+// aberta), guarda o aviso e busca quando o usuário fechar.
+function sbRecebeuAviso() {
+    if (typeof user !== "function" || !user()) return;
+    if (sbTelaOcupada()) {
+        sbRtRecarregar = true;
+        return;
+    }
+    sbRtRecarregar = false;
+    clearTimeout(sbRecebeuAviso.h);
+    sbRecebeuAviso.h = setTimeout(function () {
+        if (!sbOcupado) sbAtualizar();
+        if (typeof sbAoAtualizar === "function") {
+            try { sbAoAtualizar(); } catch (e) {}
+        }
+    }, 400);   // agrupa vários avisos seguidos numa busca só
+}
+
+// Chamado pelo script.js: a tela ficou livre (fechou ficha/formulário).
+// Se ficou alguma novidade esperando, busca agora.
+function sbLiberouTela() {
+    if (!sbRtRecarregar) return;
+    sbRtRecarregar = false;
+    if (!sbOcupado) sbAtualizar();
+}
+
+function sbTelaOcupada() {
+    if (typeof viewAtual !== "undefined" && viewAtual === "nova") return true;
+    try {
+        if (document.getElementById("sheet") && document.getElementById("sheet").classList.contains("on")) return true;
+        if (document.getElementById("relTela") && document.getElementById("relTela").classList.contains("on")) return true;
+    } catch (e) {}
+    return false;
+}
 
 try {
     if (window.supabase && typeof window.supabase.createClient === "function") {
@@ -472,6 +544,7 @@ async function sbEnviar() {
         sbFalhasSeguidas = 0;
         sbFalhasEnvio = 0;
         sbMotivoUltimo = "";
+        sbLigarRealtime();           // envio deu certo: garante o canal de tempo real aberto
     } catch (e) {
         console.warn("Supabase:", e);
         sbMotivoUltimo = sbMotivoErro(e);
@@ -619,14 +692,26 @@ async function sbForcarEnvio() {
     return sbFalhasEnvio === 0;
 }
 
-setInterval(sbAtualizar, 30000);
-
+// Ao voltar o app para a frente do celular: busca na hora (o tempo real pode
+// ter ficado suspenso enquanto o app estava minimizado)
 document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) sbAtualizar();
+    if (!document.hidden) {
+        sbAtualizar();
+        if (!sbRtCanal && sbRtOk !== false) sbLigarRealtime();
+    }
 });
 
 // Ao voltar a internet, sincroniza na hora
 window.addEventListener("online", function () {
     sbFalhasSeguidas = 0;
+    sbRtEspera = 0;
     sbAtualizar();
+    sbLigarRealtime();
 });
+
+// Tempo real como prioridade; a busca periódica de 60 s fica só como socorro
+// (antes eram 30 s e cada rodada lia o banco inteiro, gastando internet do celular)
+setInterval(function () {
+    if (document.hidden) return;          // app minimizado: não gasta internet
+    sbAtualizar();
+}, 60000);

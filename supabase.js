@@ -12,7 +12,7 @@
 var SB_URL = "https://llmwmqmkqhwjvilkpseq.supabase.co";
 var SB_KEY = "sb_publishable_7wXP-xiLJJ2H12qD6YN0WQ_keb0PneE";
 var SB_BUCKET = "fotos";
-var SB_VERSAO = 2;   // sobe quando este arquivo mudar (aparece em Dados e backup)
+var SB_VERSAO = 3;   // sobe quando este arquivo mudar (aparece em Dados e backup)
 
 var sb = null;
 var sbOnline = false;
@@ -25,6 +25,7 @@ var sbAvisouBucket = false;
 var sbAvisouRede = false;
 var sbFalhasSeguidas = 0;  // falhas de rede em sequência (espera crescente entre tentativas)
 var sbUltimoEnvio = 0;
+var sbFalhasEnvio = 0;     // falhas de envio em sequência (zera só quando um envio dá certo)
 var sbSnap = { ordens: {}, usuarios: {}, eventos: {}, avisos: {}, estoque: {}, compras: {}, config: {} };
 
 try {
@@ -361,7 +362,15 @@ function sbSync() {
 }
 
 async function sbEnviar() {
-    if (!sb || !sbOnline) return;          // nunca envia sem ter lido o servidor antes
+    if (!sb) return;
+    if (!sbOnline) {
+        // Ainda sem leitura bem-sucedida: não envia (evita subir dado velho), mas
+        // também NÃO esquece o pedido. Antes ele era descartado aqui e a OS nova
+        // nunca chegava ao servidor; agora tenta ler de novo em seguida.
+        clearTimeout(sbEnviar.re);
+        sbEnviar.re = setTimeout(function () { sbAtualizar(); }, 4000);
+        return;
+    }
     // Leitura em andamento (o app demorou e ainda está buscando): espera terminar,
     // senão o retrato (sbSnap) seria comparado com dados incompletos.
     if (sbTravaLida > 0) { sbSync(); return; }
@@ -382,8 +391,8 @@ async function sbEnviar() {
             var subir = lista.filter(function (x) { return x && x.id != null && ant[String(x.id)] !== atual[String(x.id)]; });
             var apagar = Object.keys(ant).filter(function (id) { return atual[id] === undefined; });
 
-            for (var i = 0; i < subir.length; i += 20) {
-                var lote = subir.slice(i, i + 20).map(function (x) {
+            for (var i = 0; i < subir.length; i += 5) {   // lote pequeno: OS com foto em base64 é pesada
+                var lote = subir.slice(i, i + 5).map(function (x) {
                     return { id: String(x.id), data: x, updated_at: new Date().toISOString() };
                 });
                 var r = await sb.from(t).upsert(lote);
@@ -409,10 +418,16 @@ async function sbEnviar() {
         }
         sbUltimoEnvio = Date.now();
         sbFalhasSeguidas = 0;
+        sbFalhasEnvio = 0;
     } catch (e) {
         console.warn("Supabase:", e);
         var rede = sbEhErroDeRede(e);
         sbFalhasSeguidas++;
+        sbFalhasEnvio++;
+        // Falha repetida no envio (mesmo parecendo "rede"): avisa uma vez, para não ficar mudo
+        if (rede && sbFalhasEnvio === 3) {
+            toast("Não está conseguindo enviar as alterações. Se a internet está boa, rode o supabase.sql (fotos grandes sem o bucket 'fotos' podem travar o envio).");
+        }
         if (rede) {
             // Sem internet: silencioso (o usuário já vê "offline" na tela de dados).
             // Tenta de novo com espera crescente, até 2 minutos.
@@ -424,6 +439,49 @@ async function sbEnviar() {
         }
     }
     sbOcupado = false;
+}
+
+/* ==========================================
+   MESCLAR: servidor + o que ainda não foi enviado
+   `antes` = retrato do servidor ANTES desta leitura.
+   - criada/editada aqui e ainda não enviada -> vale a versão daqui
+   - apagada aqui e ainda não enviada        -> continua apagada
+   - o resto                                 -> vale o servidor
+========================================== */
+function sbMesclar(srvLista, locLista, antes) {
+    var srv = sbLista(srvLista), loc = sbLista(locLista);
+    antes = antes || {};
+    var locMap = {}, srvMap = {}, out = [], pendente = false;
+    loc.forEach(function (x) { if (x && x.id != null) locMap[String(x.id)] = x; });
+    srv.forEach(function (x) { if (x && x.id != null) srvMap[String(x.id)] = x; });
+
+    srv.forEach(function (s) {
+        if (!s || s.id == null) return;
+        var id = String(s.id), l = locMap[id], a = antes[id];
+        if (a !== undefined && l === undefined) { pendente = true; return; }   // apagada aqui
+        if (l !== undefined && a !== undefined && JSON.stringify(l) !== a) {   // editada aqui
+            out.push(l); pendente = true; return;
+        }
+        out.push(s);
+    });
+    loc.forEach(function (l) {
+        if (!l || l.id == null) return;
+        var id = String(l.id);
+        if (srvMap[id]) return;
+        var a = antes[id];
+        if (a === undefined || JSON.stringify(l) !== a) {                      // criada aqui
+            out.push(l); pendente = true;
+        }
+    });
+    return { lista: out, pendente: pendente };
+}
+
+function sbCopiaSnap() {
+    var c = { config: Object.assign({}, sbSnap.config || {}) };
+    ["ordens", "usuarios", "eventos", "avisos", "estoque", "compras"].forEach(function (t) {
+        c[t] = Object.assign({}, sbSnap[t] || {});
+    });
+    return c;
 }
 
 /* ==========================================
@@ -440,6 +498,8 @@ async function sbAtualizar() {
     if (sbOcupado) return;
 
     var r;
+    var antes = sbCopiaSnap();     // retrato anterior: serve para achar o que ainda não subiu
+    var setoresAntes = antes.config.setores, empresaAntes = antes.config.empresa;
     try {
         r = await sbCarregar();
     } catch (e) {
@@ -448,15 +508,27 @@ async function sbAtualizar() {
     if (!r || !Array.isArray(r) || !r[1] || !sbOnline) return;
 
     // (o filtro acima já evita atualizar com a folha ou o formulário abertos)
-    ordens = sbLista(r[0]);
-    usuarios = sbLista(r[1]);
-    if (!usuarios.length) return;                            // servidor vazio: não apaga a equipe
-    setores = Array.isArray(r[2]) && r[2].length ? r[2] : setores;
-    eventos = sbLista(r[3]);
-    avisos = sbLista(r[4]);
-    empresa = (r[5] && typeof r[5] === "object") ? r[5] : empresa;
-    estoque = sbLista(r[6]);
-    compras = sbLista(r[7]);
+    // Antes: ordens = servidor. Isso APAGAVA daqui a OS criada e ainda não enviada
+    // (ex.: criada logo depois de uma falha de rede). Agora mescla.
+    var pend = false;
+    function mescla(srv, loc, ant) {
+        var m = sbMesclar(srv, loc, ant);
+        if (m.pendente) pend = true;
+        return m.lista;
+    }
+    var novaUsuarios = sbLista(r[1]);
+    if (!novaUsuarios.length) return;                        // servidor vazio: não apaga a equipe
+    ordens = mescla(r[0], ordens, antes.ordens);
+    usuarios = mescla(novaUsuarios, usuarios, antes.usuarios);
+    eventos = mescla(r[3], eventos, antes.eventos);
+    avisos = mescla(r[4], avisos, antes.avisos);
+    estoque = mescla(r[6], estoque, antes.estoque);
+    compras = mescla(r[7], compras, antes.compras);
+    if (setoresAntes != null && JSON.stringify(setores) !== setoresAntes) pend = true;   // setores editados aqui: mantém
+    else setores = Array.isArray(r[2]) && r[2].length ? r[2] : setores;
+    if (empresaAntes != null && JSON.stringify(empresa) !== empresaAntes) pend = true;
+    else empresa = (r[5] && typeof r[5] === "object") ? r[5] : empresa;
+    if (pend) sbSync();                                      // sobe o que estava pendente
 
     try {
         normalizar();

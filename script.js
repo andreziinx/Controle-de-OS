@@ -6666,21 +6666,10 @@ function iniciarApp(r) {
         dadosIniciais();
     }
     normalizar();
-    // Guarda exatamente o que veio do servidor (mesmo formato do retrato do
-    // supabase.js): assim o envio só manda o que mudou de verdade e consegue
-    // apagar no servidor a OS excluída neste aparelho.
-    if (typeof sbSnap !== "undefined" && typeof sbMapa === "function") {
-        sbSnap.ordens = sbMapa(ordens);
-        sbSnap.usuarios = sbMapa(usuarios);
-        sbSnap.eventos = sbMapa(eventos);
-        sbSnap.avisos = sbMapa(avisos);
-        sbSnap.estoque = sbMapa(estoque);
-        sbSnap.compras = sbMapa(compras);
-        sbSnap.config = {
-            setores: JSON.stringify(setores),
-            empresa: JSON.stringify(empresa)
-        };
-    }
+    // O retrato do servidor (sbSnap) é montado só em sbCarregarDeVerdade, na leitura
+    // real. Antes, aqui ele era refeito com os dados do aparelho: se o app abria
+    // offline (ou com o banco vazio), tudo que existia só aqui era marcado como "já
+    // enviado" e nunca subia para o Supabase.
     salvar();
 
     var s = 0;
